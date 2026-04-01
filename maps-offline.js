@@ -31,7 +31,7 @@ updateNetStatus();
 //  MAP
 // ══════════════════════════════════════════
 const map = L.map('map', { zoomControl: false }).setView([20, 0], 3);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+let _currentTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   maxZoom: 19, crossOrigin: true
 }).addTo(map);
@@ -43,8 +43,10 @@ const S = {
   mode: 'car', origin: null, dest: null, oC: null, dC: null,
   routeL: null, routeShadow: null, oMark: null, dMark: null,
   myMark: null, myCircle: null, watchId: null, gpsOk: false, gpsCoords: null,
-  ctxLL: null, steps: [], stepCoords: [], activeStep: -1, navigating: false,
-  areas: JSON.parse(localStorage.getItem('offAreas') || '[]')
+  ctxLL: null, ctxElev: null, steps: [], stepCoords: [], activeStep: -1, navigating: false,
+  areas: JSON.parse(localStorage.getItem('offAreas') || '[]'),
+  groundLevel: parseFloat(localStorage.getItem('groundLevel') || '0'),
+  mapLayer: 'map', heatmapOn: false
 };
 
 // ══════════════════════════════════════════
@@ -505,6 +507,8 @@ function clearAllCache() {
 // ══════════════════════════════════════════
 map.on('contextmenu', e => {
   S.ctxLL = e.latlng;
+  S.ctxElev = null; // reset, prefetch in background
+  fetchElev(e.latlng.lat, e.latlng.lng).then(info => { S.ctxElev = info; });
   const menu = document.getElementById('ctx-menu');
   document.getElementById('ctx-coords-el').textContent = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
   const cr = map.getContainer().getBoundingClientRect();
@@ -533,11 +537,21 @@ function ctxTo() {
 }
 function ctxWhat() {
   const { lat, lng } = S.ctxLL;
-  rgc(lat, lng).then(name => {
-    L.popup({ maxWidth: 240 }).setLatLng([lat, lng])
-      .setContent(`<div style="font-size:13px"><b>${esc(name.split(',')[0])}</b><br><small>${esc(name.split(',').slice(1, 3).join(','))}</small><br><span style="color:#5f6368;font-size:11px">${lat.toFixed(6)}, ${lng.toFixed(6)}</span></div>`)
-      .openOn(map);
-  }); closeCtx();
+  closeCtx();
+  Promise.all([
+    rgc(lat, lng),
+    S.ctxElev ? Promise.resolve(S.ctxElev) : fetchElev(lat, lng)
+  ]).then(([name, { elev }]) => {
+    let html = `<div style="font-size:13px"><b>${esc(name.split(',')[0])}</b><br>
+      <small>${esc(name.split(',').slice(1, 3).join(','))}</small><br>
+      <span style="color:#5f6368;font-size:11px">${lat.toFixed(6)}, ${lng.toFixed(6)}</span>`;
+    if (elev !== null)
+      html += `<br><span style="color:#188038;font-size:12px;font-weight:500">▲ ${elev.toFixed(0)} m a.s.l.</span>
+        <br><a href="#" onclick="setGroundLevel(${elev.toFixed(1)});document.querySelector('.leaflet-popup-close-button').click();return false;"
+          style="color:#1a73e8;font-size:10px">📍 Set as ground reference</a>`;
+    html += '</div>';
+    L.popup({ maxWidth: 260 }).setLatLng([lat, lng]).setContent(html).openOn(map);
+  });
 }
 function ctxCache() {
   const { lat, lng } = S.ctxLL; const pad = 0.04;
@@ -600,6 +614,550 @@ function ll2t(lat, lng, z) {
   return { x: Math.max(0, Math.min(n - 1, x)), y: Math.max(0, Math.min(n - 1, y)) };
 }
 
+// Haversine distance in metres
+function haverDist(la1, lo1, la2, lo2) {
+  const R = 6371000, r = Math.PI / 180;
+  const dlat = (la2 - la1) * r, dlon = (lo2 - lo1) * r;
+  const a = Math.sin(dlat / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dlon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ══════════════════════════════════════════
+//  ELEVATION ENGINE
+//  Sources : Open-Elevation API (online) +
+//            IndexedDB cache (offline)
+//  Strategy:
+//    zoom < 7   → chip hidden
+//    zoom 7-12  → sample map center, debounced 1.5 s
+//    zoom > 12  → sample map center, debounced 0.7 s
+//    mousemove  → tooltip from cache only (no extra API calls)
+//    map click  → fetch & popup + chip update
+//    route load → full elevation profile chart (gain/loss/min/max)
+// ══════════════════════════════════════════
+
+// ── IndexedDB persistence ────────────────────────────────
+let _elevDB = null;
+function openElevDB() {
+  return new Promise((res, rej) => {
+    if (_elevDB) { res(_elevDB); return; }
+    const r = indexedDB.open('maps-elevation-v1', 1);
+    r.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('elev'))
+        db.createObjectStore('elev'); // key = "lat3,lon3"
+    };
+    r.onsuccess = e => { _elevDB = e.target.result; res(_elevDB); };
+    r.onerror = () => rej(r.error);
+  });
+}
+async function elevDbGet(key) {
+  try {
+    const db = await openElevDB();
+    return new Promise((res) => {
+      const req = db.transaction('elev', 'readonly').objectStore('elev').get(key);
+      req.onsuccess = () => res(req.result ?? null);
+      req.onerror = () => res(null);
+    });
+  } catch { return null; }
+}
+async function elevDbPut(key, val) {
+  try {
+    const db = await openElevDB();
+    db.transaction('elev', 'readwrite').objectStore('elev').put(val, key);
+  } catch { }
+}
+
+// Key: 3 decimal places ≈ 111 m resolution
+function elevKey(lat, lon) { return `${lat.toFixed(3)},${lon.toFixed(3)}`; }
+
+// ── Single-point elevation fetch ─────────────────────────
+async function fetchElev(lat, lon) {
+  const key = elevKey(lat, lon);
+  // 1. IndexedDB cache hit
+  const cached = await elevDbGet(key);
+  if (cached !== null) return { elev: cached, src: 'cached' };
+  // 2. Network (Open-Elevation free API)
+  if (!navigator.onLine) return { elev: null, src: 'offline' };
+  try {
+    const r = await fetch(
+      `https://api.open-elevation.com/api/v1/lookup?locations=${lat.toFixed(5)},${lon.toFixed(5)}`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    const d = await r.json();
+    if (d.results && d.results[0]) {
+      const e = d.results[0].elevation;
+      await elevDbPut(key, e);
+      return { elev: e, src: 'live' };
+    }
+  } catch { }
+  return { elev: null, src: 'error' };
+}
+
+// ── Batch elevation fetch (for route profile) ────────────
+async function fetchElevBatch(points) {
+  // points = [{latitude, longitude}]
+  const results = new Array(points.length).fill(null);
+  const missing = [];
+  for (let i = 0; i < points.length; i++) {
+    const k = elevKey(points[i].latitude, points[i].longitude);
+    const c = await elevDbGet(k);
+    if (c !== null) results[i] = c;
+    else missing.push(i);
+  }
+  if (!missing.length) return results;
+  if (!navigator.onLine) return results; // partial — cache only
+  // POST in chunks of 100 (API limit)
+  const chunks = [];
+  for (let i = 0; i < missing.length; i += 100) chunks.push(missing.slice(i, i + 100));
+  for (const chunk of chunks) {
+    try {
+      const locs = chunk.map(i => ({ latitude: points[i].latitude, longitude: points[i].longitude }));
+      const r = await fetch('https://api.open-elevation.com/api/v1/lookup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locations: locs }),
+        signal: AbortSignal.timeout(15000)
+      });
+      const d = await r.json();
+      if (d.results) {
+        d.results.forEach((res, j) => {
+          const idx = chunk[j]; results[idx] = res.elevation;
+          elevDbPut(elevKey(points[idx].latitude, points[idx].longitude), res.elevation);
+        });
+      }
+    } catch { }
+  }
+  return results;
+}
+
+// ── Chip DOM refs ────────────────────────────────────────
+const elevChip = document.getElementById('elev-chip');
+const elevVal = document.getElementById('elev-val');
+const elevSrc = document.getElementById('elev-src');
+const elevSpinner = document.getElementById('elev-spin');
+
+function showElevChip(m, src, slope, estimated) {
+  if (m === null) { elevVal.textContent = 'No data'; elevSrc.textContent = ''; elevChip.classList.remove('hidden'); return; }
+  elevVal.textContent = `${m.toFixed(0)} m${estimated ? ' est.' : ''}`;
+  if (slope !== null && slope !== undefined)
+    elevSrc.textContent = `≈${slope.toFixed(1)}% slope`;
+  else
+    elevSrc.textContent = src === 'cached' ? '●' : src === 'live' ? '' : src === 'offline' ? '○' : '';
+  elevChip.classList.remove('hidden');
+}
+function hideElevChip() { elevChip.classList.add('hidden'); }
+
+// ── Hover tooltip — only from cache, no extra calls ──────
+const elevTip = document.getElementById('elev-tooltip');
+let _hoverPending = null, _lastHoverKey = '', _tipHide = null;
+map.on('mousemove', e => {
+  if (map.getZoom() < 10) return;
+  const { lat, lng } = e.latlng;
+  const k = elevKey(lat, lng);
+  if (k === _lastHoverKey) return;
+  _lastHoverKey = k;
+  clearTimeout(_hoverPending);
+  _hoverPending = setTimeout(async () => {
+    const cached = await elevDbGet(k);
+    if (cached === null) return; // tooltip only from cache
+    const pt = e.containerPoint;
+    elevTip.style.left = (pt.x + 14) + 'px';
+    elevTip.style.top = (pt.y - 28) + 'px';
+    elevTip.textContent = `▲ ${cached.toFixed(0)} m asl`;
+    elevTip.style.display = 'block';
+    clearTimeout(_tipHide);
+    _tipHide = setTimeout(() => { elevTip.style.display = 'none'; }, 1800);
+  }, 120);
+});
+map.on('mouseout', () => { elevTip.style.display = 'none'; clearTimeout(_tipHide); });
+
+// ── Chip update on map move/zoom ─────────────────────────
+let _chipTimer = null;
+function scheduleChipUpdate() {
+  const z = map.getZoom();
+  if (z < 7) { hideElevChip(); return; }
+  const delay = z < 12 ? 1500 : 700;
+  clearTimeout(_chipTimer);
+  elevSpinner.classList.add('on');
+  _chipTimer = setTimeout(async () => {
+    const c = map.getCenter();
+    const { elev, slope, estimated } = await getElevInfo(c.lat, c.lng, z);
+    elevSpinner.classList.remove('on');
+    showElevChip(elev, 'live', slope, estimated);
+  }, delay);
+}
+map.on('moveend', scheduleChipUpdate);
+map.on('zoomend', scheduleChipUpdate);
+
+// ── Map click → getElevInfo (grid + max + slope) ─────────
+map.on('click', async e => {
+  const z = map.getZoom();
+  if (z < 8) return;
+  const { lat, lng } = e.latlng;
+  elevSpinner.classList.add('on');
+  const { elev, slope, estimated } = await getElevInfo(lat, lng, z);
+  elevSpinner.classList.remove('on');
+  showElevChip(elev, 'live', slope, estimated);
+  if (elev !== null) {
+    let html = `<div style="font-size:12px;line-height:1.7">
+      <b>▲ ${elev.toFixed(0)} m${estimated ? ' <span style="color:#9aa0a6">(est.)</span>' : ''} above sea level</b>`;
+    if (slope !== null) html += `<br><span style="color:#5f6368;font-size:11px">≈ ${slope.toFixed(1)}% max slope</span>`;
+    html += `<br><span style="color:#5f6368;font-size:11px">${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
+      <br><a href="#" onclick="setGroundLevel(${elev.toFixed(1)});document.querySelector('.leaflet-popup-close-button').click();return false;"
+        style="color:#1a73e8;font-size:10px;text-decoration:none">📍 Set as ground reference</a>
+    </div>`;
+    L.popup({ maxWidth: 240 }).setLatLng([lat, lng]).setContent(html).openOn(map);
+  }
+});
+
+// ── GPS altitude integration ─────────────────────────────
+const _origGrantGPS = grantGPS;
+window.grantGPS = function () {
+  _origGrantGPS && _origGrantGPS();
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(pos => {
+      const alt = pos.coords.altitude;
+      if (alt !== null && alt !== undefined) {
+        elevVal.textContent = `${alt.toFixed(0)} m`;
+        elevSrc.textContent = 'GPS';
+        elevChip.classList.remove('hidden');
+        const { latitude: la, longitude: lo } = pos.coords;
+        elevDbPut(elevKey(la, lo), alt);
+      }
+    }, () => { }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 4000 });
+  }
+};
+
+// ── Context menu elevation lookup ────────────────────────
+function ctxElevation() {
+  const { lat, lng } = S.ctxLL; closeCtx();
+  elevSpinner.classList.add('on');
+  fetchElev(lat, lng).then(({ elev, src }) => {
+    elevSpinner.classList.remove('on');
+    showElevChip(elev, src);
+    if (elev !== null) {
+      L.popup({ maxWidth: 200 }).setLatLng([lat, lng])
+        .setContent(`<div style="font-size:12px"><b>▲ ${elev.toFixed(0)} m</b> above sea level<br><span style="color:#5f6368;font-size:11px">${lat.toFixed(5)}, ${lng.toFixed(5)}</span></div>`)
+        .openOn(map);
+    } else {
+      toast('Elevation data unavailable for this point');
+    }
+  });
+}
+
+// ── Route elevation profile chart ────────────────────────
+let _elevProfileData = [];
+
+async function buildElevationProfile(route) {
+  const coords = route.geometry.coordinates; // [[lon, lat], ...]
+  const MAX = 80;
+  const step = Math.max(1, Math.floor(coords.length / MAX));
+  const sampled = [], dists = [];
+  let cumDist = 0;
+  for (let i = 0; i < coords.length; i += step) {
+    const [lon, lat] = coords[i];
+    sampled.push({ latitude: lat, longitude: lon });
+    if (i > 0) {
+      const [plon, plat] = coords[Math.max(0, i - step)];
+      cumDist += haverDist(plat, plon, lat, lon);
+    }
+    dists.push(cumDist);
+  }
+  const elevs = await fetchElevBatch(sampled);
+  _elevProfileData = sampled.map((p, i) => ({ lat: p.latitude, lon: p.longitude, dist: dists[i], elev: elevs[i] }));
+  drawElevProfile(_elevProfileData);
+  document.getElementById('elev-profile').classList.add('open');
+}
+
+function drawElevProfile(data) {
+  const canvas = document.getElementById('elev-canvas');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx2 = canvas.getContext('2d'); ctx2.scale(dpr, dpr);
+
+  const valid = data.filter(d => d.elev !== null);
+  if (!valid.length) {
+    ctx2.fillStyle = '#9aa0a6'; ctx2.font = '11px Roboto,sans-serif';
+    ctx2.fillText('No elevation data available', W / 2 - 70, H / 2); return;
+  }
+  const elevs = valid.map(d => d.elev);
+  const minE = Math.min(...elevs), maxE = Math.max(...elevs), range = maxE - minE || 1;
+  const maxDist = data[data.length - 1].dist;
+
+  // Stats
+  let gain = 0, loss = 0;
+  for (let i = 1; i < valid.length; i++) {
+    const d = valid[i].elev - valid[i - 1].elev;
+    if (d > 0) gain += d; else loss += Math.abs(d);
+  }
+  document.getElementById('ep-gain').textContent = `+${gain.toFixed(0)}m`;
+  document.getElementById('ep-loss').textContent = `-${loss.toFixed(0)}m`;
+  document.getElementById('ep-min').textContent = `${minE.toFixed(0)}m`;
+  document.getElementById('ep-max').textContent = `${maxE.toFixed(0)}m`;
+
+  const pad = { t: 6, r: 8, b: 18, l: 36 };
+  const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
+  const xOf = dist => pad.l + dist / maxDist * cW;
+  const yOf = e => pad.t + (1 - (e - minE) / range) * cH;
+
+  // Gradient fill
+  const grad = ctx2.createLinearGradient(0, pad.t, 0, pad.t + cH);
+  grad.addColorStop(0, 'rgba(26,115,232,.28)');
+  grad.addColorStop(1, 'rgba(26,115,232,.04)');
+
+  const pts = data.filter(d => d.elev !== null);
+  ctx2.beginPath();
+  pts.forEach((d, i) => { const x = xOf(d.dist), y = yOf(d.elev); i === 0 ? ctx2.moveTo(x, y) : ctx2.lineTo(x, y); });
+  ctx2.lineTo(xOf(pts[pts.length - 1].dist), pad.t + cH);
+  ctx2.lineTo(xOf(pts[0].dist), pad.t + cH); ctx2.closePath();
+  ctx2.fillStyle = grad; ctx2.fill();
+
+  // Line
+  ctx2.beginPath();
+  pts.forEach((d, i) => { const x = xOf(d.dist), y = yOf(d.elev); i === 0 ? ctx2.moveTo(x, y) : ctx2.lineTo(x, y); });
+  ctx2.strokeStyle = '#1a73e8'; ctx2.lineWidth = 1.8; ctx2.lineJoin = 'round'; ctx2.stroke();
+
+  // Y-axis labels
+  ctx2.fillStyle = '#9aa0a6'; ctx2.font = '9px Roboto,sans-serif'; ctx2.textAlign = 'right';
+  [minE, minE + range / 2, maxE].forEach(e => {
+    const y = yOf(e); ctx2.fillText(`${e.toFixed(0)}`, pad.l - 3, y + 3);
+    ctx2.beginPath(); ctx2.moveTo(pad.l, y); ctx2.lineTo(pad.l + cW, y);
+    ctx2.strokeStyle = 'rgba(0,0,0,.05)'; ctx2.lineWidth = 1; ctx2.stroke();
+  });
+
+  // X-axis distance labels
+  ctx2.textAlign = 'center'; ctx2.fillStyle = '#9aa0a6';
+  const distKm = maxDist / 1000;
+  [0, .25, .5, .75, 1].forEach(f => {
+    ctx2.fillText(`${(distKm * f).toFixed(1)}km`, xOf(maxDist * f), H - 4);
+  });
+
+  // Hover scrubber
+  canvas.onmousemove = ev => {
+    const rect = canvas.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left - pad.l) / cW));
+    const targetDist = frac * maxDist;
+    let near = pts[0];
+    pts.forEach(p => { if (Math.abs(p.dist - targetDist) < Math.abs(near.dist - targetDist)) near = p; });
+    elevTip.style.left = (ev.clientX + 10) + 'px'; elevTip.style.top = (ev.clientY - 30) + 'px';
+    elevTip.textContent = `▲ ${near.elev.toFixed(0)} m  ·  ${(near.dist / 1000).toFixed(2)} km`;
+    elevTip.style.display = 'block';
+  };
+  canvas.onmouseleave = () => { elevTip.style.display = 'none'; };
+}
+
+function closeElevProfile() {
+  document.getElementById('elev-profile').classList.remove('open');
+  _elevProfileData = [];
+}
+
+// ── Patch renderRoute to auto-build elevation profile ────
+const __renderRoute = renderRoute;
+window.renderRoute = function (route, from, to) {
+  __renderRoute(route, from, to);
+  closeElevProfile();
+  buildElevationProfile(route).catch(() => { });
+};
+
+// ══════════════════════════════════════════
+//  ELEVATION GRID SAMPLING
+//  Grid of points → max elevation + slope %
+//  zoom ≥ 15  → 1×1 (exact point)
+//  zoom 12-14 → 3×3, ~100 m spacing
+//  zoom < 12  → 5×5, ~500 m spacing
+// ══════════════════════════════════════════
+async function elevGrid(lat, lon, zoom) {
+  const size = zoom >= 15 ? 1 : zoom >= 12 ? 3 : 5;
+  const spacingDeg = zoom >= 15 ? 0 : zoom >= 12 ? 0.001 : 0.005;
+  const half = Math.floor(size / 2);
+  const pts = [];
+  for (let i = -half; i <= half; i++)
+    for (let j = -half; j <= half; j++)
+      pts.push({ lat: lat + i * spacingDeg, lon: lon + j * spacingDeg });
+  const batch = pts.map(p => ({ latitude: p.lat, longitude: p.lon }));
+  const elevs = await fetchElevBatch(batch);
+  return pts.map((p, i) => ({ ...p, elev: elevs[i] }));
+}
+
+function calcSlope(gridPts, zoom) {
+  if (zoom >= 15) return null; // single point — no slope
+  const spacingDeg = zoom >= 12 ? 0.001 : 0.005;
+  const size = zoom >= 12 ? 3 : 5;
+  const centerIdx = Math.floor(gridPts.length / 2);
+  const cElev = gridPts[centerIdx].elev;
+  if (cElev === null) return null;
+  const cLat = gridPts[centerIdx].lat;
+  let maxSlope = 0;
+  for (const pt of gridPts) {
+    if (pt.elev === null || pt === gridPts[centerIdx]) continue;
+    const dlat = (pt.lat - cLat) * 111000;
+    const dlon = (pt.lon - gridPts[centerIdx].lon) * 111000 * Math.cos(cLat * Math.PI / 180);
+    const distM = Math.sqrt(dlat * dlat + dlon * dlon);
+    if (distM < 1) continue;
+    const slope = Math.abs(pt.elev - cElev) / distM * 100;
+    if (slope > maxSlope) maxSlope = slope;
+  }
+  return maxSlope;
+}
+
+async function getElevInfo(lat, lon, zoom) {
+  const gridPts = await elevGrid(lat, lon, zoom);
+  const validElevs = gridPts.map(p => p.elev).filter(e => e !== null);
+  if (!validElevs.length) return { elev: null, slope: null, estimated: false };
+  const elev = Math.max(...validElevs); // max of sampled grid
+  const slope = calcSlope(gridPts, zoom);
+  const estimated = zoom < 12;
+  return { elev, slope, estimated };
+}
+
+// ══════════════════════════════════════════
+//  MAP LAYER MANAGEMENT
+//  OSM Standard / Esri Satellite / OpenTopoMap
+// ══════════════════════════════════════════
+const TILE_DEFS = {
+  map: {
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attr: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19, opts: { crossOrigin: true }
+  },
+  terrain: {
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attr: 'Map data: © OpenStreetMap | Style: © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+    maxZoom: 17, opts: {}
+  }
+};
+
+function setLayer(id) {
+  const def = TILE_DEFS[id];
+  if (!def) return;
+  if (_currentTileLayer) map.removeLayer(_currentTileLayer);
+  _currentTileLayer = L.tileLayer(def.url, {
+    attribution: def.attr, maxZoom: def.maxZoom, ...def.opts
+  }).addTo(map);
+  // Move to back so overlays stay on top
+  _currentTileLayer.bringToBack();
+  document.querySelectorAll('.layer-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.layer === id)
+  );
+  S.mapLayer = id;
+}
+
+// ══════════════════════════════════════════
+//  ELEVATION HEATMAP OVERLAY
+//  Reads all cached IDB points, colors each
+//  0.001° cell by (elev − groundLevel) delta.
+//  Color ramp: deep-blue→cyan→green→yellow→red
+//  No interpolation between cells (solid blocks).
+// ══════════════════════════════════════════
+
+// ── IDB full scan ───────────────────────────────────────
+async function getAllElevData() {
+  try {
+    const db = await openElevDB();
+    return new Promise(res => {
+      const out = [];
+      const req = db.transaction('elev', 'readonly').objectStore('elev').openCursor();
+      req.onsuccess = ev => {
+        const cur = ev.target.result;
+        if (cur) {
+          const [la, lo] = cur.key.split(',').map(Number);
+          if (!isNaN(la) && !isNaN(lo) && cur.value !== null)
+            out.push({ lat: la, lon: lo, elev: cur.value });
+          cur.continue();
+        } else { res(out); }
+      };
+      req.onerror = () => res([]);
+    });
+  } catch { return []; }
+}
+
+// ── Delta → RGBA color ───────────────────────────────────
+// delta = elevation - groundLevel (metres)
+function elevToColor(delta) {
+  const RANGE = 500;
+  let r, g, b;
+  if (delta <= -RANGE)      { [r,g,b] = [0,   0,   95];  }  // deep ocean blue
+  else if (delta < -200)    { r=0; g=0; b=Math.round(95+160*(delta+RANGE)/300); }
+  else if (delta < -50)     { r=0; g=Math.round((delta+200)/150*200); b=200; }  // blue→cyan
+  else if (delta < 0)       { r=0; g=200; b=Math.round(200*(1-(delta+50)/50)); }// cyan→green
+  else if (delta === 0)     { [r,g,b] = [0, 180, 0];    }  // ground = green
+  else if (delta <= 50)     { r=Math.round(delta/50*200); g=180; b=0; }         // green→yellow
+  else if (delta <= 200)    { r=200; g=Math.round(180-(delta-50)/150*130); b=0; }// yellow→orange
+  else if (delta <= RANGE)  { r=200; g=Math.round(50*(1-(delta-200)/300)); b=0; }// orange→red
+  else                      { [r,g,b] = [200, 0, 0];    }  // high = red
+  return `rgba(${r},${g},${b},0.52)`;
+}
+
+// ── Custom Leaflet canvas layer ──────────────────────────
+const ElevHeatLayer = L.Layer.extend({
+  onAdd(map) {
+    this._map = map;
+    this._cnv = document.createElement('canvas');
+    this._cnv.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:300';
+    map.getPane('overlayPane').appendChild(this._cnv);
+    map.on('moveend zoomend resize', this._render, this);
+    this._render();
+  },
+  onRemove(map) {
+    this._cnv.remove();
+    map.off('moveend zoomend resize', this._render, this);
+  },
+  async _render() {
+    const map = this._map; if (!map) return;
+    const size = map.getSize();
+    this._cnv.width = size.x; this._cnv.height = size.y;
+    const ctx = this._cnv.getContext('2d');
+    ctx.clearRect(0, 0, size.x, size.y);
+
+    // Align canvas to map's overlay pane offset
+    const tl = map.containerPointToLayerPoint([0, 0]);
+    L.DomUtil.setPosition(this._cnv, tl);
+
+    const data = await getAllElevData();
+    if (!data.length) return;
+
+    const CELL = 0.001; // IDB key resolution in degrees
+    const ref = S.groundLevel;
+
+    for (const { lat, lon, elev } of data) {
+      // Each IDB key is the cell center rounded to 3 dp
+      const nw = map.latLngToContainerPoint([lat + CELL / 2, lon - CELL / 2]);
+      const se = map.latLngToContainerPoint([lat - CELL / 2, lon + CELL / 2]);
+      const w = Math.max(1, se.x - nw.x);
+      const h = Math.max(1, se.y - nw.y);
+      ctx.fillStyle = elevToColor(elev - ref);
+      ctx.fillRect(Math.round(nw.x), Math.round(nw.y), Math.round(w), Math.round(h));
+    }
+  }
+});
+
+let _heatLayer = null;
+function toggleHeatmap() {
+  const btn = document.getElementById('heatmap-btn');
+  const legend = document.getElementById('elev-legend');
+  S.heatmapOn = !S.heatmapOn;
+  if (S.heatmapOn) {
+    _heatLayer = new ElevHeatLayer();
+    _heatLayer.addTo(map);
+    btn.classList.add('active');
+    legend.classList.remove('hidden');
+    toast('Elevation heatmap ON — click anywhere to populate data', 4000);
+  } else {
+    if (_heatLayer) { map.removeLayer(_heatLayer); _heatLayer = null; }
+    btn.classList.remove('active');
+    legend.classList.add('hidden');
+  }
+}
+
+// ── Ground level reference ───────────────────────────────
+function setGroundLevel(elev) {
+  S.groundLevel = elev;
+  localStorage.setItem('groundLevel', String(elev));
+  document.getElementById('legend-ref').textContent = `Ref: ${elev.toFixed(0)} m`;
+  toast(`Ground reference set to ${elev.toFixed(0)} m`, 2500);
+  if (_heatLayer) _heatLayer._render(); // re-render with new ref
+}
+
 // ══════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════
@@ -608,4 +1166,9 @@ window.addEventListener('load', () => {
     if (!S.gpsOk) document.getElementById('gps-panel').classList.add('show');
   }, 1000);
   renderAreas();
+  // Update legend ref display from persisted value
+  document.getElementById('legend-ref').textContent =
+    `Ref: ${S.groundLevel.toFixed(0)} m${S.groundLevel === 0 ? ' (sea level)' : ''}`;
+  // Pre-warm elevation chip after map settles
+  setTimeout(scheduleChipUpdate, 2500);
 });

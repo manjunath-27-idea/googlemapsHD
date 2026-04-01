@@ -1,5 +1,6 @@
 // Maps Offline – Service Worker
-const TC = 'maps-tiles-v3', RC = 'maps-routes-v3', GC = 'maps-geo-v3', ALL = [TC, RC, GC];
+const TC = 'maps-tiles-v3', RC = 'maps-routes-v3', GC = 'maps-geo-v3', EC = 'maps-elevation-v3';
+const ALL = [TC, RC, GC, EC];
 
 self.addEventListener('install', e => { e.waitUntil(self.skipWaiting()); });
 
@@ -67,6 +68,27 @@ self.addEventListener('fetch', e => {
     }));
     return;
   }
+
+  // ── Elevation cache (Open-Elevation) ───────────────────
+  // Network-first: serve from cache while revalidating in background
+  if (u.hostname === 'api.open-elevation.com') {
+    e.respondWith(caches.open(EC).then(async c => {
+      const h = await c.match(e.request);
+      if (h) {
+        // Background revalidate
+        fetch(e.request.clone()).then(r => { if (r && r.ok) c.put(e.request, r.clone()); }).catch(() => {});
+        return h;
+      }
+      try {
+        const r = await fetch(e.request.clone());
+        if (r.ok) c.put(e.request, r.clone());
+        return r;
+      } catch {
+        return new Response(JSON.stringify({ results: [] }), { headers: { 'Content-Type': 'application/json' } });
+      }
+    }));
+    return;
+  }
 });
 
 self.addEventListener('message', async e => {
@@ -91,11 +113,13 @@ self.addEventListener('message', async e => {
     e.source.postMessage({ type: 'DONE', done, total: tiles.length });
   }
 
-  // ── Stats ──────────────────────────────────────────────
+  // ── Stats (tiles + elevation entries) ─────────────────
   if (e.data.type === 'STATS') {
     const c = await caches.open(TC);
     const k = await c.keys();
-    e.source.postMessage({ type: 'STATS_RES', n: k.length });
+    const ec = await caches.open(EC);
+    const ek = await ec.keys();
+    e.source.postMessage({ type: 'STATS_RES', n: k.length + ek.length });
   }
 
   // ── Clear all caches ───────────────────────────────────
