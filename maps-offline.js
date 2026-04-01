@@ -949,6 +949,171 @@ function drawElevProfile(data) {
 function closeElevProfile() {
   document.getElementById('elev-profile').classList.remove('open');
   _elevProfileData = [];
+  document.getElementById('elev-suggestions').innerHTML = '';
+}
+
+// ── Route elevation suggestions ──────────────────────────
+// Analyzes _elevProfileData and generates human-readable
+// suggestions about climbs, descents, steep sections, etc.
+function generateElevSuggestions(data) {
+  const el = document.getElementById('elev-suggestions');
+  const valid = data.filter(d => d.elev !== null);
+  if (valid.length < 3) { el.innerHTML = ''; return; }
+
+  const cards = [];
+  const elevs = valid.map(d => d.elev);
+  const totalDist = valid[valid.length - 1].dist;
+  const minE = Math.min(...elevs), maxE = Math.max(...elevs);
+  const startE = valid[0].elev, endE = valid[valid.length - 1].elev;
+  const netChange = endE - startE;
+
+  // Compute total gain, loss, and find segments
+  let totalGain = 0, totalLoss = 0;
+  const segments = []; // {type:'climb'|'descent', start, end, deltaElev, dist, maxGrade}
+  let segStart = 0, segDir = 0;
+
+  for (let i = 1; i < valid.length; i++) {
+    const de = valid[i].elev - valid[i - 1].elev;
+    const dd = valid[i].dist - valid[i - 1].dist;
+    if (de > 0) totalGain += de; else totalLoss += Math.abs(de);
+    const dir = de > 0 ? 1 : de < 0 ? -1 : segDir;
+    if (dir !== segDir && segDir !== 0) {
+      // Segment ended
+      const deltaE = valid[i - 1].elev - valid[segStart].elev;
+      const segDist = valid[i - 1].dist - valid[segStart].dist;
+      if (Math.abs(deltaE) > 10 && segDist > 50) {
+        // Find max grade in this segment
+        let maxGrade = 0;
+        for (let j = segStart + 1; j < i; j++) {
+          const d = valid[j].dist - valid[j - 1].dist;
+          if (d > 0) { const g = Math.abs(valid[j].elev - valid[j - 1].elev) / d * 100; if (g > maxGrade) maxGrade = g; }
+        }
+        segments.push({
+          type: deltaE > 0 ? 'climb' : 'descent',
+          startIdx: segStart, endIdx: i - 1,
+          deltaElev: Math.abs(deltaE), dist: segDist, maxGrade,
+          startDist: valid[segStart].dist, endDist: valid[i - 1].dist
+        });
+      }
+      segStart = i - 1;
+    }
+    segDir = dir;
+  }
+  // Close last segment
+  if (segStart < valid.length - 1) {
+    const deltaE = valid[valid.length - 1].elev - valid[segStart].elev;
+    const segDist = valid[valid.length - 1].dist - valid[segStart].dist;
+    if (Math.abs(deltaE) > 10 && segDist > 50) {
+      let maxGrade = 0;
+      for (let j = segStart + 1; j < valid.length; j++) {
+        const d = valid[j].dist - valid[j - 1].dist;
+        if (d > 0) { const g = Math.abs(valid[j].elev - valid[j - 1].elev) / d * 100; if (g > maxGrade) maxGrade = g; }
+      }
+      segments.push({
+        type: deltaE > 0 ? 'climb' : 'descent',
+        startIdx: segStart, endIdx: valid.length - 1,
+        deltaElev: Math.abs(deltaE), dist: segDist, maxGrade,
+        startDist: valid[segStart].dist, endDist: valid[valid.length - 1].dist
+      });
+    }
+  }
+
+  // ── Overall difficulty ──
+  const avgGrade = totalDist > 0 ? (totalGain + totalLoss) / (totalDist / 1000) : 0; // m per km
+  let difficulty, diffBadge;
+  if (avgGrade < 8 && maxE - minE < 50) { difficulty = 'Mostly flat route'; diffBadge = 'ok'; }
+  else if (avgGrade < 20) { difficulty = 'Gently rolling terrain'; diffBadge = 'info'; }
+  else if (avgGrade < 40) { difficulty = 'Moderate elevation changes'; diffBadge = 'info'; }
+  else if (avgGrade < 70) { difficulty = 'Hilly route — significant climbs'; diffBadge = 'warn'; }
+  else { difficulty = 'Very hilly — challenging elevation'; diffBadge = 'warn'; }
+
+  cards.push(`<div class="es-card">
+    <div class="es-icon ${diffBadge === 'ok' ? 'flat' : diffBadge === 'warn' ? 'steep' : 'climb'}">
+      ${diffBadge === 'ok' ? '━' : diffBadge === 'warn' ? '⚠' : '〰'}
+    </div>
+    <div class="es-body">
+      <div class="es-title">${difficulty}</div>
+      <div class="es-detail">+${totalGain.toFixed(0)}m gain · −${totalLoss.toFixed(0)}m loss · ${(maxE - minE).toFixed(0)}m range</div>
+      <span class="es-badge ${diffBadge}">${avgGrade.toFixed(0)} m/km avg undulation</span>
+    </div></div>`);
+
+  // ── Net elevation change ──
+  if (Math.abs(netChange) > 15) {
+    const goingUp = netChange > 0;
+    cards.push(`<div class="es-card">
+      <div class="es-icon ${goingUp ? 'climb' : 'descent'}">${goingUp ? '↗' : '↘'}</div>
+      <div class="es-body">
+        <div class="es-title">Destination is ${Math.abs(netChange).toFixed(0)}m ${goingUp ? 'higher' : 'lower'}</div>
+        <div class="es-detail">${startE.toFixed(0)}m → ${endE.toFixed(0)}m elevation (net ${goingUp ? '+' : ''}${netChange.toFixed(0)}m)</div>
+      </div></div>`);
+  }
+
+  // ── Summit / highest point ──
+  if (maxE - Math.max(startE, endE) > 20) {
+    const peakPt = valid.find(d => d.elev === maxE);
+    cards.push(`<div class="es-card" onclick="map.setView([${peakPt.lat},${peakPt.lon}],15)">
+      <div class="es-icon summit">▲</div>
+      <div class="es-body">
+        <div class="es-title">Highest point: ${maxE.toFixed(0)}m at ${(peakPt.dist / 1000).toFixed(1)}km</div>
+        <div class="es-detail">${(maxE - startE).toFixed(0)}m above start · ${(maxE - endE).toFixed(0)}m above destination</div>
+      </div></div>`);
+  }
+
+  // ── Valley / lowest point ──
+  if (Math.min(startE, endE) - minE > 20) {
+    const valPt = valid.find(d => d.elev === minE);
+    cards.push(`<div class="es-card" onclick="map.setView([${valPt.lat},${valPt.lon}],15)">
+      <div class="es-icon valley">▽</div>
+      <div class="es-body">
+        <div class="es-title">Lowest point: ${minE.toFixed(0)}m at ${(valPt.dist / 1000).toFixed(1)}km</div>
+        <div class="es-detail">${(startE - minE).toFixed(0)}m below start · possible river/valley crossing</div>
+      </div></div>`);
+  }
+
+  // ── Notable segments (steep climbs and descents) ──
+  const steep = segments.filter(s => s.maxGrade > 6).sort((a, b) => b.maxGrade - a.maxGrade).slice(0, 4);
+  for (const s of steep) {
+    const label = s.type === 'climb' ? 'Steep climb' : 'Sharp descent';
+    const icon = s.type === 'climb' ? '↑' : '↓';
+    const cls = s.maxGrade > 12 ? 'steep' : s.type === 'climb' ? 'climb' : 'descent';
+    const distLabel = `${(s.startDist / 1000).toFixed(1)}–${(s.endDist / 1000).toFixed(1)}km`;
+    const pt = valid[Math.floor((s.startIdx + s.endIdx) / 2)];
+    cards.push(`<div class="es-card" onclick="map.setView([${pt.lat},${pt.lon}],15)">
+      <div class="es-icon ${cls}">${icon}</div>
+      <div class="es-body">
+        <div class="es-title">${label}: ${s.deltaElev.toFixed(0)}m over ${(s.dist / 1000).toFixed(1)}km</div>
+        <div class="es-detail">At ${distLabel} · max grade ${s.maxGrade.toFixed(1)}%</div>
+        ${s.maxGrade > 12 ? '<span class="es-badge warn">Very steep</span>' : s.maxGrade > 8 ? '<span class="es-badge info">Steep section</span>' : ''}
+      </div></div>`);
+  }
+
+  // ── Flat stretches ──
+  const flatSegs = segments.filter(s => s.maxGrade < 2 && s.dist > totalDist * 0.15);
+  if (flatSegs.length) {
+    const longest = flatSegs.sort((a, b) => b.dist - a.dist)[0];
+    cards.push(`<div class="es-card">
+      <div class="es-icon flat">━</div>
+      <div class="es-body">
+        <div class="es-title">Flat stretch: ${(longest.dist / 1000).toFixed(1)}km</div>
+        <div class="es-detail">At ${(longest.startDist / 1000).toFixed(1)}–${(longest.endDist / 1000).toFixed(1)}km · easy terrain</div>
+        <span class="es-badge ok">Easy</span>
+      </div></div>`);
+  }
+
+  // ── Below sea level warning ──
+  if (minE < 0) {
+    cards.push(`<div class="es-card">
+      <div class="es-icon valley">🌊</div>
+      <div class="es-body">
+        <div class="es-title">Below sea level: ${minE.toFixed(0)}m</div>
+        <div class="es-detail">Parts of this route pass below sea level</div>
+        <span class="es-badge warn">Below sea level</span>
+      </div></div>`);
+  }
+
+  el.innerHTML = cards.length
+    ? `<div class="es-header"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M14 6l-1-2H5v17h2v-7h5l1 2h7V6h-6zm4 8h-4l-1-2H7V6h5l1 2h5v6z"/></svg> Depth & Height Analysis</div>` + cards.join('')
+    : '';
 }
 
 // ── Patch renderRoute to auto-build elevation profile ────
@@ -956,8 +1121,11 @@ const __renderRoute = renderRoute;
 window.renderRoute = function (route, from, to) {
   __renderRoute(route, from, to);
   closeElevProfile();
-  buildElevationProfile(route).catch(() => { });
+  buildElevationProfile(route).then(() => {
+    generateElevSuggestions(_elevProfileData);
+  }).catch(() => { });
 };
+
 
 // ══════════════════════════════════════════
 //  ELEVATION GRID SAMPLING
@@ -1043,14 +1211,16 @@ function setLayer(id) {
 }
 
 // ══════════════════════════════════════════
-//  ELEVATION HEATMAP OVERLAY
-//  Reads all cached IDB points, colors each
-//  0.001° cell by (elev − groundLevel) delta.
+//  TOPOGRAPHIC OVERLAY
+//  When active, auto-fetches elevation for
+//  the entire visible viewport, colors each
+//  cell by (elev − groundLevel) delta.
 //  Color ramp: deep-blue→cyan→green→yellow→red
-//  No interpolation between cells (solid blocks).
+//  Cells = solid blocks, NO interpolation
+//  (straight fill between data nodes).
 // ══════════════════════════════════════════
 
-// ── IDB full scan ───────────────────────────────────────
+// ── IDB full scan ────────────────────────────────────────
 async function getAllElevData() {
   try {
     const db = await openElevDB();
@@ -1071,65 +1241,216 @@ async function getAllElevData() {
   } catch { return []; }
 }
 
-// ── Delta → RGBA color ───────────────────────────────────
-// delta = elevation - groundLevel (metres)
-function elevToColor(delta) {
-  const RANGE = 500;
-  let r, g, b;
-  if (delta <= -RANGE)      { [r,g,b] = [0,   0,   95];  }  // deep ocean blue
-  else if (delta < -200)    { r=0; g=0; b=Math.round(95+160*(delta+RANGE)/300); }
-  else if (delta < -50)     { r=0; g=Math.round((delta+200)/150*200); b=200; }  // blue→cyan
-  else if (delta < 0)       { r=0; g=200; b=Math.round(200*(1-(delta+50)/50)); }// cyan→green
-  else if (delta === 0)     { [r,g,b] = [0, 180, 0];    }  // ground = green
-  else if (delta <= 50)     { r=Math.round(delta/50*200); g=180; b=0; }         // green→yellow
-  else if (delta <= 200)    { r=200; g=Math.round(180-(delta-50)/150*130); b=0; }// yellow→orange
-  else if (delta <= RANGE)  { r=200; g=Math.round(50*(1-(delta-200)/300)); b=0; }// orange→red
-  else                      { [r,g,b] = [200, 0, 0];    }  // high = red
-  return `rgba(${r},${g},${b},0.52)`;
+// ── Grid step size (degrees) by zoom ─────────────────────
+//  Smaller step = finer cells at high zoom
+//  All steps are multiples of 0.001 (IDB key resolution)
+function getTopoStep(zoom) {
+  if (zoom < 8)  return 0.5;   // ~55 km − very coarse overview
+  if (zoom < 10) return 0.1;   // ~11 km
+  if (zoom < 12) return 0.02;  // ~2.2 km
+  if (zoom < 14) return 0.005; // ~550 m
+  if (zoom < 16) return 0.001; // ~111 m − street-level
+  return 0.001;
 }
 
-// ── Custom Leaflet canvas layer ──────────────────────────
+// ── Auto-fetch elevation for visible viewport ─────────────
+//  Generates a grid covering bounds at current step,
+//  checks IDB (via fetchElevBatch), fetches missing from API.
+//  Capped at 200 points per call to avoid API abuse.
+let _fetchBusy = false;
+async function autoFetchVisibleElev(m) {
+  if (_fetchBusy || !navigator.onLine) return;
+  _fetchBusy = true;
+  try {
+    const b = m.getBounds();
+    const step = getTopoStep(m.getZoom());
+    const s = Math.floor(b.getSouth() / step) * step;
+    const n = Math.ceil(b.getNorth() / step) * step;
+    const w = Math.floor(b.getWest() / step) * step;
+    const e = Math.ceil(b.getEast() / step) * step;
+    const pts = [];
+    for (let lat = s; lat <= n + 1e-9; lat += step) {
+      for (let lon = w; lon <= e + 1e-9; lon += step) {
+        pts.push({
+          latitude: parseFloat(lat.toFixed(6)),
+          longitude: parseFloat(lon.toFixed(6))
+        });
+      }
+    }
+    if (pts.length) await fetchElevBatch(pts.slice(0, 200));
+  } catch { }
+  finally { _fetchBusy = false; }
+}
+
+// ── Delta → RGBA fill color ───────────────────────────────
+function elevToColor(delta, a = 0.55) {
+  const R = 500; let r, g, b;
+  if      (delta <= -R)   { [r,g,b]=[0,0,95]; }
+  else if (delta < -200)  { r=0; g=0; b=Math.round(95+160*(delta+R)/300); }
+  else if (delta < -50)   { r=0; g=Math.round((delta+200)/150*200); b=200; }
+  else if (delta < 0)     { r=0; g=200; b=Math.round(200*(1-(delta+50)/50)); }
+  else if (delta < 1)     { [r,g,b]=[0,180,0]; }
+  else if (delta <= 50)   { r=Math.round(delta/50*200); g=180; b=0; }
+  else if (delta <= 200)  { r=200; g=Math.round(180-(delta-50)/150*130); b=0; }
+  else if (delta <= R)    { r=200; g=Math.round(50*(1-(delta-200)/300)); b=0; }
+  else                    { [r,g,b]=[200,0,0]; }
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// ── Contour interval from elevation range ─────────────────
+function getContourInterval(range) {
+  if (range < 20)   return 2;
+  if (range < 100)  return 10;
+  if (range < 400)  return 25;
+  if (range < 1500) return 100;
+  return 250;
+}
+
+// ── Build 2-D grid from IDB cache ────────────────────────
+function buildElevGrid(data, step, bounds) {
+  const gS = Math.floor(bounds.getSouth()/step)*step;
+  const gN = Math.ceil(bounds.getNorth()/step)*step;
+  const gW = Math.floor(bounds.getWest()/step)*step;
+  const gE = Math.ceil(bounds.getEast()/step)*step;
+  const rows = Math.round((gN-gS)/step)+1;
+  const cols = Math.round((gE-gW)/step)+1;
+  const grid = Array.from({length:rows},()=>new Array(cols).fill(null));
+  const lut = new Map();
+  for (const {lat,lon,elev} of data) lut.set(elevKey(lat,lon),elev);
+  for (let r=0;r<rows;r++) {
+    for (let c=0;c<cols;c++) {
+      const lat=parseFloat((gN-r*step).toFixed(6));
+      const lon=parseFloat((gW+c*step).toFixed(6));
+      const v=lut.get(elevKey(lat,lon));
+      if (v!==undefined) grid[r][c]=v;
+    }
+  }
+  return {grid,rows,cols,gN,gW};
+}
+
+// ── Marching Squares edge table ───────────────────────────
+// Corners: bit3=TL bit2=TR bit1=BR bit0=BL
+// Edges:   0=top 1=right 2=bottom 3=left
+const _MS=[
+  [],[[3,2]],[[1,2]],[[3,1]],      // 0-3
+  [[0,1]],[[0,3],[1,2]],[[0,2]],[[0,3]], // 4-7
+  [[0,3]],[[0,2]],[[0,1],[3,2]],[[0,1]], // 8-11
+  [[1,3]],[[1,2]],[[2,3]],[]       // 12-15
+];
+
+// ── Draw one iso-contour level ────────────────────────────
+function drawContourLevel(ctx,m,grid,rows,cols,gN,gW,step,level) {
+  for (let r=0;r<rows-1;r++) {
+    const laN=gN-r*step, laS=laN-step;
+    for (let c=0;c<cols-1;c++) {
+      const loW=gW+c*step, loE=loW+step;
+      const tl=grid[r][c],tr=grid[r][c+1],bl=grid[r+1][c],br=grid[r+1][c+1];
+      if (tl===null||tr===null||bl===null||br===null) continue;
+      let idx=0;
+      if(tl>=level)idx|=8; if(tr>=level)idx|=4;
+      if(br>=level)idx|=2; if(bl>=level)idx|=1;
+      const segs=_MS[idx]; if(!segs.length) continue;
+      const t=(a,b)=>a===b?0.5:Math.max(0,Math.min(1,(level-a)/(b-a)));
+      const ep=[
+        [laN, loW+t(tl,tr)*step],      // 0 top
+        [laN-t(tr,br)*step, loE],       // 1 right
+        [laS, loW+t(bl,br)*step],       // 2 bottom
+        [laN-t(tl,bl)*step, loW],       // 3 left
+      ];
+      for (const [a,b] of segs) {
+        const pa=m.latLngToContainerPoint(ep[a]);
+        const pb=m.latLngToContainerPoint(ep[b]);
+        ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y);
+      }
+    }
+  }
+}
+
+// ── Custom Leaflet Canvas Layer ───────────────────────────
+// Renders: bilinear-interpolated color fill per cell +
+//          marching-squares contour lines connecting equal-elev nodes.
 const ElevHeatLayer = L.Layer.extend({
-  onAdd(map) {
-    this._map = map;
-    this._cnv = document.createElement('canvas');
-    this._cnv.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:300';
-    map.getPane('overlayPane').appendChild(this._cnv);
-    map.on('moveend zoomend resize', this._render, this);
-    this._render();
+  onAdd(m) {
+    this._map=m;
+    this._cnv=document.createElement('canvas');
+    this._cnv.style.cssText='position:absolute;top:0;left:0;pointer-events:none;z-index:300';
+    m.getPane('overlayPane').appendChild(this._cnv);
+    this._onMove=()=>{
+      this._render();
+      autoFetchVisibleElev(this._map).then(()=>this._render());
+    };
+    m.on('moveend zoomend resize',this._onMove);
+    this._onMove();
   },
-  onRemove(map) {
+  onRemove(m) {
     this._cnv.remove();
-    map.off('moveend zoomend resize', this._render, this);
+    m.off('moveend zoomend resize',this._onMove);
   },
   async _render() {
-    const map = this._map; if (!map) return;
-    const size = map.getSize();
-    this._cnv.width = size.x; this._cnv.height = size.y;
-    const ctx = this._cnv.getContext('2d');
-    ctx.clearRect(0, 0, size.x, size.y);
+    const m=this._map; if(!m) return;
+    const size=m.getSize();
+    const dpr=window.devicePixelRatio||1;
+    this._cnv.width=size.x*dpr; this._cnv.height=size.y*dpr;
+    this._cnv.style.width=size.x+'px'; this._cnv.style.height=size.y+'px';
+    const ctx=this._cnv.getContext('2d');
+    ctx.scale(dpr,dpr);
+    ctx.clearRect(0,0,size.x,size.y);
+    L.DomUtil.setPosition(this._cnv,m.containerPointToLayerPoint([0,0]));
 
-    // Align canvas to map's overlay pane offset
-    const tl = map.containerPointToLayerPoint([0, 0]);
-    L.DomUtil.setPosition(this._cnv, tl);
+    const zoom=m.getZoom();
+    const step=getTopoStep(zoom);
+    const all=await getAllElevData();
+    if (all.length<4) return;
 
-    const data = await getAllElevData();
-    if (!data.length) return;
+    const {grid,rows,cols,gN,gW}=buildElevGrid(all,step,m.getBounds());
+    if (rows<2||cols<2) return;
 
-    const CELL = 0.001; // IDB key resolution in degrees
-    const ref = S.groundLevel;
+    const ref=S.groundLevel;
+    const SUBS=zoom>=14?5:zoom>=12?3:zoom>=10?2:1;
+    const validE=all.map(d=>d.elev).filter(e=>e!==null);
+    const minE=Math.min(...validE), maxE=Math.max(...validE);
 
-    for (const { lat, lon, elev } of data) {
-      // Each IDB key is the cell center rounded to 3 dp
-      const nw = map.latLngToContainerPoint([lat + CELL / 2, lon - CELL / 2]);
-      const se = map.latLngToContainerPoint([lat - CELL / 2, lon + CELL / 2]);
-      const w = Math.max(1, se.x - nw.x);
-      const h = Math.max(1, se.y - nw.y);
-      ctx.fillStyle = elevToColor(elev - ref);
-      ctx.fillRect(Math.round(nw.x), Math.round(nw.y), Math.round(w), Math.round(h));
+    // ── 1. Bilinear-interpolated fill ──────────────────────
+    // For each grid cell with 4 known corners, subdivide into SUBS×SUBS
+    // sub-cells and bilinearly interpolate elevation → color.
+    // This "connects the nodes" with a smooth gradient fill.
+    for (let r=0;r<rows-1;r++) {
+      const laN=gN-r*step, laS=laN-step;
+      for (let c=0;c<cols-1;c++) {
+        const loW=gW+c*step, loE=loW+step;
+        const tl=grid[r][c],tr=grid[r][c+1],bl=grid[r+1][c],br=grid[r+1][c+1];
+        if (tl===null||tr===null||bl===null||br===null) continue;
+        for (let sr=0;sr<SUBS;sr++) {
+          for (let sc=0;sc<SUBS;sc++) {
+            // Bilinear interpolation at sub-cell center
+            const fx=(sc+.5)/SUBS, fy=(sr+.5)/SUBS;
+            const elev=tl*(1-fx)*(1-fy)+tr*fx*(1-fy)+bl*(1-fx)*fy+br*fx*fy;
+            const p1=m.latLngToContainerPoint([laN-(sr/SUBS)*(laN-laS), loW+(sc/SUBS)*(loE-loW)]);
+            const p2=m.latLngToContainerPoint([laN-((sr+1)/SUBS)*(laN-laS), loW+((sc+1)/SUBS)*(loE-loW)]);
+            ctx.fillStyle=elevToColor(elev-ref);
+            ctx.fillRect(Math.floor(p1.x),Math.floor(p1.y),Math.ceil(p2.x-p1.x)+1,Math.ceil(p2.y-p1.y)+1);
+          }
+        }
+      }
+    }
+
+    // ── 2. Marching-squares contour lines ──────────────────
+    // Draw iso-elevation lines at regular intervals (like topo map).
+    const interval=getContourInterval(maxE-minE);
+    const first=Math.ceil(minE/interval)*interval;
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    for (let level=first;level<=maxE+.1;level+=interval) {
+      // Thicker + darker every 5th line (index contours)
+      const isMajor=Math.round((level-first)/interval)%5===0;
+      ctx.strokeStyle=isMajor?'rgba(0,50,0,0.65)':'rgba(0,60,0,0.38)';
+      ctx.lineWidth=isMajor?1.4:0.7;
+      ctx.beginPath();
+      drawContourLevel(ctx,m,grid,rows,cols,gN,gW,step,level);
+      ctx.stroke();
     }
   }
 });
+
 
 let _heatLayer = null;
 function toggleHeatmap() {
@@ -1141,7 +1462,7 @@ function toggleHeatmap() {
     _heatLayer.addTo(map);
     btn.classList.add('active');
     legend.classList.remove('hidden');
-    toast('Elevation heatmap ON — click anywhere to populate data', 4000);
+    toast('Topographic view ON — fetching elevation for visible area…', 4000);
   } else {
     if (_heatLayer) { map.removeLayer(_heatLayer); _heatLayer = null; }
     btn.classList.remove('active');

@@ -311,3 +311,27 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 .legend-labels{display:flex;justify-content:space-between;font-size:9px;color:var(--sub);margin-bottom:3px}
 .legend-ref{font-size:10px;color:var(--text);padding-top:3px;border-top:1px solid var(--border)}
 
+/* ── ELEVATION SUGGESTIONS ── */
+#elev-suggestions{padding:0}
+#elev-suggestions:empty{display:none}
+.es-header{padding:8px 16px 4px;font-size:10px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;
+  display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--border);background:#fafafa}
+.es-card{display:flex;gap:10px;padding:9px 16px;border-bottom:1px solid #f1f3f4;cursor:pointer;transition:background .15s}
+.es-card:hover{background:#f8f9fa}
+.es-card:last-child{border-bottom:1px solid var(--border)}
+.es-icon{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
+.es-icon.climb{background:#fce8e6;color:#d93025}
+.es-icon.descent{background:#e8f0fe;color:#1a73e8}
+.es-icon.steep{background:#fff3e0;color:#e65100}
+.es-icon.flat{background:#e8f5e9;color:#2e7d32}
+.es-icon.valley{background:#e3f2fd;color:#0277bd}
+.es-icon.summit{background:#fbe9e7;color:#bf360c}
+.es-body{flex:1;min-width:0}
+.es-title{font-size:12px;font-weight:500;color:var(--text);line-height:1.3}
+.es-detail{font-size:11px;color:var(--sub);margin-top:1px;line-height:1.4}
+.es-badge{font-size:9px;display:inline-block;padding:1px 6px;border-radius:8px;font-weight:500;margin-top:3px}
+.es-badge.warn{background:#fff3e0;color:#e65100}
+.es-badge.info{background:#e8f0fe;color:#1a73e8}
+.es-badge.ok{background:#e8f5e9;color:#2e7d32}
+
+
