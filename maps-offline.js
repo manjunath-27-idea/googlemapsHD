@@ -46,7 +46,7 @@ const S = {
   ctxLL: null, ctxElev: null, steps: [], stepCoords: [], activeStep: -1, navigating: false,
   areas: JSON.parse(localStorage.getItem('offAreas') || '[]'),
   groundLevel: parseFloat(localStorage.getItem('groundLevel') || '0'),
-  mapLayer: 'map', heatmapOn: false
+  mapLayer: 'map', heatmapOn: false, elevSegments: []
 };
 
 // ══════════════════════════════════════════
@@ -389,6 +389,63 @@ function updHUD(i) {
   const eta = new Date(Date.now() + rem * 1000);
   document.getElementById('nav-eta-el').textContent = eta.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+let _lastAlertSegment = null;
+function checkElevAlert(lat, lon) {
+  if (!S.elevSegments || !S.elevSegments.length || !_elevProfileData || !_elevProfileData.length) return;
+  
+  // Find closest profile point to get current distance along route
+  let nearIdx = 0, minD = Infinity;
+  for (let i = 0; i < _elevProfileData.length; i++) {
+    const p = _elevProfileData[i];
+    const d = Math.pow(lat - p.lat, 2) + Math.pow(lon - p.lon, 2);
+    if (d < minD) { minD = d; nearIdx = i; }
+  }
+  const currDist = _elevProfileData[nearIdx].dist;
+
+  // Look for steep segments approaching (within 300m) or currently in progress
+  const upcoming = S.elevSegments.find(s => 
+    (s.startDist > currDist && (s.startDist - currDist) < 300 && (s.maxGrade > 6 || s.deltaElev > 30)) ||
+    (currDist >= s.startDist && currDist <= s.endDist && (s.maxGrade > 6 || s.deltaElev > 30))
+  );
+
+  const bar = document.getElementById('elev-alert-bar');
+  if (upcoming) {
+    const distAway = Math.max(0, upcoming.startDist - currDist);
+    const isClimb = upcoming.type === 'climb';
+    
+    if (_lastAlertSegment !== upcoming) {
+      _lastAlertSegment = upcoming;
+      const isSteep = upcoming.maxGrade > 10;
+      const cls = isSteep ? 'valley' : (isClimb ? 'climb' : 'descent'); 
+      const icon = isClimb ? '↗' : '↘';
+      
+      bar.innerHTML = `
+        <div class="eab-icon ${cls}">${icon}</div>
+        <div class="eab-body">
+          <div class="eab-title" id="eab-title">Upcoming Terrain</div>
+          <div class="eab-desc">${upcoming.deltaElev.toFixed(0)}m ${isClimb?'gain':'drop'} · ${upcoming.maxGrade.toFixed(1)}% slope</div>
+        </div>
+      `;
+      bar.classList.remove('hidden');
+    }
+    
+    // Update live title distance
+    const tEl = document.getElementById('eab-title');
+    if (tEl) {
+      if (distAway > 25) {
+        tEl.textContent = `In ${distAway.toFixed(0)}m: ${isClimb ? 'Steep Climb' : 'Sharp Descent'}`;
+      } else {
+        tEl.textContent = `Now ${isClimb ? 'Climbing' : 'Descending'}`;
+      }
+    }
+  } else {
+    if (!bar.classList.contains('hidden')) {
+      bar.classList.add('hidden');
+      _lastAlertSegment = null;
+    }
+  }
+}
+
 function doNavUpdate(lat, lon) {
   if (!S.navigating || !S.stepCoords.length) return;
   let near = 0, minD = Infinity;
@@ -398,11 +455,14 @@ function doNavUpdate(lat, lon) {
     document.querySelectorAll('.step-item').forEach((el, j) => el.classList.toggle('active', j === near));
   }
   map.setView([lat, lon], map.getZoom(), { animate: true });
+  checkElevAlert(lat, lon);
 }
 function stopNavigation() {
   S.navigating = false;
   document.getElementById('nav-hud').classList.remove('show');
   document.getElementById('nav-bottom').classList.remove('show');
+  document.getElementById('elev-alert-bar').classList.add('hidden');
+  _lastAlertSegment = null;
 }
 
 // ══════════════════════════════════════════
@@ -1017,6 +1077,7 @@ function generateElevSuggestions(data) {
       });
     }
   }
+  S.elevSegments = segments;
 
   // ── Overall difficulty ──
   const avgGrade = totalDist > 0 ? (totalGain + totalLoss) / (totalDist / 1000) : 0; // m per km
