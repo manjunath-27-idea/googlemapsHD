@@ -255,18 +255,67 @@ function placeDest(coords) {
 // ══════════════════════════════════════════
 //  PANEL MANAGEMENT
 // ══════════════════════════════════════════
+function toggleSidebar() {
+  const sb = document.getElementById('sidebar');
+  const sp = document.getElementById('search-panel');
+  const sw = document.getElementById('sidebar-inner-wrap');
+  const fc = document.getElementById('floating-search-container');
+  
+  if(sb.classList.contains('hidden')) {
+    sb.classList.remove('hidden');
+    sw.insertBefore(sp, sw.firstChild);
+    fc.classList.remove('floating-mode');
+    document.getElementById('mini-rail').style.display = 'none';
+  } else {
+    sb.classList.add('hidden');
+    document.getElementById('mini-rail').style.display = 'flex';
+  }
+}
+
+function toggleSearchBox() {
+  const sb = document.getElementById('sidebar');
+  const sp = document.getElementById('search-panel');
+  const fc = document.getElementById('floating-search-container');
+  
+  if(fc.contains(sp)) {
+     const sw = document.getElementById('sidebar-inner-wrap');
+     sw.insertBefore(sp, sw.firstChild);
+     fc.classList.remove('floating-mode');
+  } else {
+     sb.classList.add('hidden');
+     fc.appendChild(sp);
+     fc.classList.add('floating-mode');
+     document.getElementById('mini-rail').style.display = 'flex';
+     document.getElementById('main-search').focus();
+  }
+}
+
+function openDirections() {
+  const sb = document.getElementById('sidebar');
+  const dirPanel = document.getElementById('dir-panel');
+  
+  if (sb.classList.contains('hidden')) {
+    toggleSidebar();
+    if (!dirPanel.classList.contains('open')) toggleDirections();
+  } else {
+    toggleDirections(); // toggle if already visible
+  }
+}
+
 function closeAll() {
   ['dir-panel', 'offline-panel', 'route-panel'].forEach(id => {
     document.getElementById(id).classList.remove('open');
   });
   document.querySelectorAll('.q-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('dir-toggle-btn').classList.remove('dir-active');
 }
+
 function toggleDirections() {
   const open = document.getElementById('dir-panel').classList.contains('open');
   closeAll();
   if (!open) {
     document.getElementById('dir-panel').classList.add('open');
-    document.getElementById('dir-toggle-btn').classList.add('active');
+    document.getElementById('dir-toggle-btn').classList.add('dir-active');
     document.getElementById('origin-input').focus();
   }
 }
@@ -316,12 +365,14 @@ async function getDirections() {
     if (prof === 'bike') routerBase = `https://routing.openstreetmap.de/routed-bike/route/v1/driving`;
     else if (prof === 'foot') routerBase = `https://routing.openstreetmap.de/routed-foot/route/v1/driving`;
     
-    const url = `${routerBase}/${S.oC[1]},${S.oC[0]};${S.dC[1]},${S.dC[0]}?overview=full&geometries=geojson&steps=true`;
+    const url = `${routerBase}/${S.oC[1]},${S.oC[0]};${S.dC[1]},${S.dC[0]}?overview=full&geometries=geojson&steps=true&alternatives=3`;
     const r = await fetch(url);
     const data = await r.json();
     if (data.code === 'offline') { toast('You are offline — no cached route for this pair', 4000); return; }
     if (data.code !== 'Ok' || !data.routes.length) { toast('No route found'); return; }
-    renderRoute(data.routes[0], oV, dV);
+    
+    S.routesData = data.routes;
+    renderRoutes(S.routesData, oV, dV, 0);
   } catch (e) { toast('Route failed — check your connection'); }
   finally {
     btn.disabled = false;
@@ -330,21 +381,41 @@ async function getDirections() {
   }
 }
 
-function renderRoute(route, from, to) {
-  if (S.routeShadow) map.removeLayer(S.routeShadow);
-  if (S.routeL) map.removeLayer(S.routeL);
-  S.routeShadow = L.geoJSON(route.geometry, { style: { color: '#000', weight: 9, opacity: .1, lineCap: 'round', lineJoin: 'round' } }).addTo(map);
-  S.routeL = L.geoJSON(route.geometry, { style: { color: '#1a73e8', weight: 5, opacity: .88, lineCap: 'round', lineJoin: 'round' } }).addTo(map);
-  map.fitBounds(S.routeL.getBounds(), { padding: [60, 380] });
+function renderRoutes(routes, from, to, activeIndex = 0) {
+  if (S.routeLayers) S.routeLayers.forEach(l => map.removeLayer(l));
+  S.routeLayers = [];
 
-  const dur = fmtDur(route.duration), dist = fmtDist(route.distance), road = mainRoad(route);
+  let boundsToFit = null;
+
+  for (let i = routes.length - 1; i >= 0; i--) {
+    const route = routes[i];
+    const isActive = (i === activeIndex);
+    const layerGroup = L.layerGroup().addTo(map);
+
+    if (isActive) {
+      L.geoJSON(route.geometry, { style: { color: '#000', weight: 9, opacity: .1, lineCap: 'round', lineJoin: 'round' }, interactive: false }).addTo(layerGroup);
+      const activeL = L.geoJSON(route.geometry, { style: { color: '#1a73e8', weight: 5, opacity: .88, lineCap: 'round', lineJoin: 'round' }, interactive: false }).addTo(layerGroup);
+      boundsToFit = activeL.getBounds();
+    } else {
+      const altL = L.geoJSON(route.geometry, { style: { color: '#88aaff', weight: 5, opacity: .5, lineCap: 'round', lineJoin: 'round' } }).addTo(layerGroup);
+      altL.on('click', () => renderRoutes(routes, from, to, i));
+    }
+    S.routeLayers.push(layerGroup);
+  }
+
+  if (boundsToFit && activeIndex === 0) {
+    map.fitBounds(boundsToFit, { padding: [60, 380] });
+  }
+
+  const activeRoute = routes[activeIndex];
+  const dur = fmtDur(activeRoute.duration), dist = fmtDist(activeRoute.distance), road = mainRoad(activeRoute);
   document.getElementById('route-summary').innerHTML =
     `<div class="route-from-to">${esc(from)} → ${esc(to)}</div>
     <div class="route-meta"><span class="route-dur">${dur}</span><span class="route-dist">${dist}</span></div>
     <div class="route-via">via ${road}</div>
     <div class="route-cache-note" id="cache-note"></div>`;
 
-  S.steps = route.legs[0].steps;
+  S.steps = activeRoute.legs[0].steps;
   S.stepCoords = S.steps.map(s => s.maneuver.location);
   document.getElementById('steps-list').innerHTML = S.steps.map((s, i) => `
     <div class="step-item" id="st-${i}" onclick="focusStep(${i})">
@@ -357,6 +428,7 @@ function renderRoute(route, from, to) {
 
   closeAll();
   document.getElementById('route-panel').classList.add('open');
+  buildElevationProfile(activeRoute, from, to);
 }
 
 function focusStep(i) {
@@ -366,9 +438,8 @@ function focusStep(i) {
 }
 
 function clearRoute() {
-  if (S.routeL) map.removeLayer(S.routeL);
-  if (S.routeShadow) map.removeLayer(S.routeShadow);
-  S.routeL = S.routeShadow = null; S.navigating = false;
+  if (S.routeLayers) S.routeLayers.forEach(l => map.removeLayer(l));
+  S.routeLayers = []; S.navigating = false;
   document.getElementById('nav-hud').classList.remove('show');
   document.getElementById('nav-bottom').classList.remove('show');
   closeAll();
@@ -382,6 +453,9 @@ function clearRoute() {
 function startNavigation() {
   if (!S.steps.length) { toast('No route loaded'); return; }
   S.navigating = true; S.activeStep = 0;
+  
+  document.getElementById('sidebar').classList.add('hidden');
+  
   document.getElementById('nav-hud').classList.add('show');
   document.getElementById('nav-bottom').classList.add('show');
   updHUD(0);
@@ -471,6 +545,8 @@ function stopNavigation() {
   document.getElementById('nav-bottom').classList.remove('show');
   document.getElementById('elev-alert-bar').classList.add('hidden');
   _lastAlertSegment = null;
+  
+  document.getElementById('sidebar').classList.remove('hidden');
 }
 
 // ══════════════════════════════════════════
@@ -627,13 +703,14 @@ function ctxCache() {
   cacheCurrentArea(fakeBounds); closeCtx();
 }
 
+
 // ══════════════════════════════════════════
-//  KEYBOARD
+//  KEYBOARD & INPUT
 // ══════════════════════════════════════════
-document.getElementById('main-search').addEventListener('keydown', async e => {
-  if (e.key !== 'Enter') return;
+async function triggerMainSearch() {
   document.getElementById('main-ac').classList.remove('open');
-  const v = e.target.value.trim(); if (!v) return;
+  const el = document.getElementById('main-search');
+  const v = el.value.trim(); if (!v) return;
   const r = await gc(v);
   if (r.length) {
     const lat = parseFloat(r[0].lat), lon = parseFloat(r[0].lon);
@@ -641,6 +718,10 @@ document.getElementById('main-search').addEventListener('keydown', async e => {
     if (S.oMark) map.removeLayer(S.oMark);
     S.oMark = L.marker([lat, lon], { icon: iPin }).addTo(map).bindPopup(`<b>${esc(r[0].display_name.split(',')[0])}</b>`, { maxWidth: 200 }).openPopup();
   } else toast('Location not found');
+}
+
+document.getElementById('main-search').addEventListener('keydown', async e => {
+  if (e.key === 'Enter') triggerMainSearch();
 });
 document.getElementById('dest-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') { document.getElementById('dest-ac').classList.remove('open'); getDirections(); }
@@ -927,6 +1008,9 @@ window.grantGPS = function () {
         elevChip.classList.remove('hidden');
         const { latitude: la, longitude: lo } = pos.coords;
         elevDbPut(elevKey(la, lo), alt);
+        if (S.navigating && typeof _elevProfileData !== 'undefined' && _elevProfileData.length) {
+           drawElevProfile(_elevProfileData, la, lo);
+        }
       }
     }, () => { }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 4000 });
   }
@@ -977,7 +1061,7 @@ async function buildElevationProfile(route, from, to) {
     _elevProfileData[0].village = startV;
     _elevProfileData[_elevProfileData.length - 1].village = endV;
     
-    const numInter = Math.min(15, Math.floor(sampled.length / 5));
+    const numInter = Math.min(50, Math.floor(sampled.length / 2));
     if (numInter > 0) {
       const stepInter = Math.floor(sampled.length / (numInter + 1));
       const interIndices = [];
@@ -994,7 +1078,7 @@ async function buildElevationProfile(route, from, to) {
                 const req = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pt.latitude}&lon=${pt.longitude}&zoom=14`, { headers: { 'Accept-Language': 'en' }, signal: AbortSignal.timeout(4000) });
                 const d = await req.json();
                 const addr = d.address || {};
-                const v = addr.village || addr.town || addr.hamlet || addr.suburb || addr.neighbourhood || addr.city || addr.municipality || d.name || (d.display_name ? d.display_name.split(',')[0] : null);
+                const v = addr.village || addr.hamlet || addr.town || addr.suburb || addr.neighbourhood || addr.city || addr.municipality || d.name || (d.display_name ? d.display_name.split(',')[0] : null);
                 
                 if (v && v.length > 2 && v !== lastV && v !== endV) {
                     _elevProfileData[idx].village = v;
@@ -1011,7 +1095,7 @@ async function buildElevationProfile(route, from, to) {
   document.getElementById('elev-profile').classList.add('open');
 }
 
-function drawElevProfile(data) {
+function drawElevProfile(data, currLat, currLon) {
   const canvas = document.getElementById('elev-canvas');
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.offsetWidth, H = canvas.offsetHeight;
@@ -1038,7 +1122,7 @@ function drawElevProfile(data) {
   document.getElementById('ep-min').textContent = `${minE.toFixed(0)}m`;
   document.getElementById('ep-max').textContent = `${maxE.toFixed(0)}m`;
 
-  const pad = { t: 6, r: 8, b: 18, l: 36 };
+  const pad = { t: 36, r: 8, b: 18, l: 36 };
   const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
   const xOf = dist => pad.l + dist / maxDist * cW;
   const yOf = e => pad.t + (1 - (e - minE) / range) * cH;
@@ -1078,28 +1162,40 @@ function drawElevProfile(data) {
   // Draw village markers
   ctx2.font = '500 10.5px Roboto,sans-serif';
   ctx2.textBaseline = 'middle';
+  
+  const drawnLabels = []; // track boundaries to prevent overlaps
+  
   pts.forEach((d, i) => {
     if (d.village) {
       const x = xOf(d.dist), y = yOf(d.elev);
+      const textW = ctx2.measureText(d.village).width;
       
+      let tx = x, align = 'center';
+      if (i === 0 || x < pad.l + textW/2 + 5) { align = 'left'; tx = x + 4; }
+      else if (i === pts.length - 1 || x > cW + pad.l - textW/2 - 5) { align = 'right'; tx = x - 4; }
+      
+      let yText = 12 + (i % 2 === 0 ? 0 : 12); 
+      
+      // Calculate horizontal boundaries with a 6px margin gap
+      const x1 = tx - (align === 'center' ? textW/2 : align === 'right' ? textW : 0) - 3;
+      const x2 = x1 + textW + 6;
+      
+      // Collision detection logic
+      const overlap = drawnLabels.some(b => b.y === yText && !(x2 < b.x1 || x1 > b.x2));
+      if (overlap && i !== 0 && i !== pts.length - 1) return; // Prioritize start/end labels always
+      
+      if (!overlap) drawnLabels.push({x1, x2, y: yText});
+
       ctx2.beginPath();
       ctx2.arc(x, y, 3.5, 0, Math.PI * 2);
       ctx2.fillStyle = '#fff'; ctx2.fill();
       ctx2.lineWidth = 2; ctx2.strokeStyle = '#1a73e8'; ctx2.stroke();
 
-      const textW = ctx2.measureText(d.village).width;
-      let tx = x, align = 'center';
-      if (i === 0 || x < pad.l + textW/2 + 5) { align = 'left'; tx = x + 4; }
-      else if (i === pts.length - 1 || x > cW + pad.l - textW/2 - 5) { align = 'right'; tx = x - 4; }
-
       ctx2.textAlign = align;
-      
-      let yText = pad.t + 6 + (i % 2 === 0 ? 0 : 12); 
-      if (yText >= y - 12) yText = Math.max(pad.t + 6, y - 18);
 
       // draw stalk
       ctx2.beginPath();
-      ctx2.moveTo(x, y - 4);
+      ctx2.moveTo(x, y - 2);
       ctx2.lineTo(x, yText + 6);
       ctx2.strokeStyle = 'rgba(26,115,232,0.4)';
       ctx2.lineWidth = 1;
@@ -1113,6 +1209,23 @@ function drawElevProfile(data) {
       ctx2.fillText(d.village, tx, yText);
     }
   });
+
+  if (currLat !== undefined && currLon !== undefined) {
+      let near = pts[0], minDist = Infinity;
+      pts.forEach(p => {
+         const m = Math.abs(p.lat - currLat) + Math.abs(p.lon - currLon);
+         if (m < minDist) { minDist = m; near = p; }
+      });
+      if (near && minDist < 0.05) {
+          const x = xOf(near.dist), y = yOf(near.elev);
+          ctx2.beginPath(); ctx2.arc(x, y, 6, 0, Math.PI*2);
+          ctx2.fillStyle = '#4285F4'; ctx2.fill();
+          ctx2.lineWidth = 2.5; ctx2.strokeStyle = '#fff'; ctx2.stroke();
+          
+          ctx2.font = '600 11px Roboto,sans-serif'; ctx2.textAlign = 'center';
+          ctx2.fillStyle = '#1a73e8'; ctx2.fillText('▾', x, y - 10);
+      }
+  }
 
   // Hover scrubber
   canvas.onmousemove = ev => {
