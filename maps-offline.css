@@ -293,14 +293,14 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
   position:absolute;top:-4px;left:0;right:0;height:8px;
   cursor:ns-resize;z-index:99;background:transparent;
 }
-#elev-profile-inner{padding:10px 16px 6px;height:100%}
+#elev-profile-inner{padding:10px 16px 6px;height:100%;display:flex;flex-direction:column}
 #elev-profile-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 .ep-title{font-size:11px;font-weight:500;color:var(--sub);display:flex;align-items:center;gap:5px}
 .ep-stats{display:flex;gap:12px}
 .ep-stat{text-align:center}
 .ep-stat-val{font-size:12px;font-weight:500;color:var(--text);font-family:'Google Sans',sans-serif}
 .ep-stat-lbl{font-size:9px;color:var(--sub)}
-#elev-canvas{width:100%;height:72px;cursor:crosshair;display:block}
+#elev-canvas{width:100%;flex:1;min-height:0;cursor:crosshair;display:block}
 .ep-close{background:none;border:none;cursor:pointer;color:var(--sub);padding:2px;border-radius:50%;line-height:1}
 .ep-close:hover{background:var(--border);color:var(--text)}
 
