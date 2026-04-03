@@ -94,6 +94,7 @@ function grantGPS() {
   if (S.watchId !== null) return;
   S.watchId = navigator.geolocation.watchPosition(
     pos => {
+      const isFirst = !S.gpsOk;
       const { latitude: lat, longitude: lon, accuracy: acc } = pos.coords;
       S.gpsOk = true; S.gpsCoords = [lat, lon];
       setGPSDot('active', 'GPS active', `±${Math.round(acc)}m`);
@@ -101,6 +102,9 @@ function grantGPS() {
       document.getElementById('gps-status').classList.add('show');
       updateMyLocMarker(lat, lon, acc);
       if (S.navigating) doNavUpdate(lat, lon);
+      if (isFirst && S.myCircle) {
+        map.fitBounds(S.myCircle.getBounds(), { maxZoom: 18 });
+      }
     },
     err => {
       const m = { 1: 'Location access denied', 2: 'Position unavailable', 3: 'Location timed out' };
@@ -308,7 +312,11 @@ async function getDirections() {
       S.dC = [parseFloat(r[0].lat), parseFloat(r[0].lon)]; S.dest = dV; placeDest(S.dC);
     }
     const prof = S.mode === 'foot' ? 'foot' : S.mode === 'bike' ? 'bike' : 'car';
-    const url = `https://router.project-osrm.org/route/v1/${prof}/${S.oC[1]},${S.oC[0]};${S.dC[1]},${S.dC[0]}?overview=full&geometries=geojson&steps=true`;
+    let routerBase = `https://router.project-osrm.org/route/v1/${prof}`;
+    if (prof === 'bike') routerBase = `https://routing.openstreetmap.de/routed-bike/route/v1/driving`;
+    else if (prof === 'foot') routerBase = `https://routing.openstreetmap.de/routed-foot/route/v1/driving`;
+    
+    const url = `${routerBase}/${S.oC[1]},${S.oC[0]};${S.dC[1]},${S.dC[0]}?overview=full&geometries=geojson&steps=true`;
     const r = await fetch(url);
     const data = await r.json();
     if (data.code === 'offline') { toast('You are offline — no cached route for this pair', 4000); return; }
@@ -936,9 +944,10 @@ async function buildElevationProfile(route, from, to) {
       if (!navigator.onLine) return null;
       const pt = sampled[idx];
       try {
-          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pt.latitude}&lon=${pt.longitude}&zoom=10`, { headers: { 'Accept-Language': 'en' }, signal: AbortSignal.timeout(4000) });
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pt.latitude}&lon=${pt.longitude}&zoom=14`, { headers: { 'Accept-Language': 'en' }, signal: AbortSignal.timeout(4000) });
           const d = await r.json();
-          return d.address?.village || d.address?.town || d.address?.city || d.name || (d.display_name ? d.display_name.split(',')[0] : null);
+          const addr = d.address || {};
+          return addr.village || addr.town || addr.hamlet || addr.suburb || addr.neighbourhood || addr.city || addr.municipality || d.name || (d.display_name ? d.display_name.split(',')[0] : null);
       } catch { return null; }
   });
 
@@ -1043,19 +1052,29 @@ function drawElevProfile(data) {
       ctx2.lineWidth = 2; ctx2.strokeStyle = '#1a73e8'; ctx2.stroke();
 
       const textW = ctx2.measureText(d.village).width;
-      let tx = x, align = 'center', yOff = y - 14;
-      if (yOff < pad.t + 10) yOff = y + 14; 
-      if (i === 0 || x < pad.l + textW/2 + 5) { align = 'left'; tx = x + 8; yOff = y; }
-      else if (i === pts.length - 1 || x > cW + pad.l - textW/2 - 5) { align = 'right'; tx = x - 8; yOff = y; }
+      let tx = x, align = 'center';
+      if (i === 0 || x < pad.l + textW/2 + 5) { align = 'left'; tx = x + 4; }
+      else if (i === pts.length - 1 || x > cW + pad.l - textW/2 - 5) { align = 'right'; tx = x - 4; }
 
       ctx2.textAlign = align;
       
+      let yText = pad.t + 6 + (i % 2 === 0 ? 0 : 12); 
+      if (yText >= y - 12) yText = Math.max(pad.t + 6, y - 18);
+
+      // draw stalk
+      ctx2.beginPath();
+      ctx2.moveTo(x, y - 4);
+      ctx2.lineTo(x, yText + 6);
+      ctx2.strokeStyle = 'rgba(26,115,232,0.4)';
+      ctx2.lineWidth = 1;
+      ctx2.stroke();
+
       ctx2.lineJoin = 'round';
       ctx2.lineWidth = 3.5;
-      ctx2.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx2.strokeText(d.village, tx, yOff);
+      ctx2.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx2.strokeText(d.village, tx, yText);
       ctx2.fillStyle = '#174ea6';
-      ctx2.fillText(d.village, tx, yOff);
+      ctx2.fillText(d.village, tx, yText);
     }
   });
 
