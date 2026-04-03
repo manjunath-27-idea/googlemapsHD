@@ -907,7 +907,7 @@ function ctxElevation() {
 // ── Route elevation profile chart ────────────────────────
 let _elevProfileData = [];
 
-async function buildElevationProfile(route) {
+async function buildElevationProfile(route, from, to) {
   const coords = route.geometry.coordinates; // [[lon, lat], ...]
   const MAX = 80;
   const step = Math.max(1, Math.floor(coords.length / MAX));
@@ -922,8 +922,46 @@ async function buildElevationProfile(route) {
     }
     dists.push(cumDist);
   }
-  const elevs = await fetchElevBatch(sampled);
+  
+  const elevsPromise = fetchElevBatch(sampled);
+  
+  const numInter = Math.min(5, Math.floor(sampled.length / 10));
+  const interIndices = [];
+  if (numInter > 0) {
+    const stepInter = Math.floor(sampled.length / (numInter + 1));
+    for(let i=1; i<=numInter; i++) interIndices.push(i * stepInter);
+  }
+
+  const villagePromises = interIndices.map(async (idx) => {
+      if (!navigator.onLine) return null;
+      const pt = sampled[idx];
+      try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pt.latitude}&lon=${pt.longitude}&zoom=10`, { headers: { 'Accept-Language': 'en' }, signal: AbortSignal.timeout(4000) });
+          const d = await r.json();
+          return d.address?.village || d.address?.town || d.address?.city || d.name || (d.display_name ? d.display_name.split(',')[0] : null);
+      } catch { return null; }
+  });
+
+  const [elevs, villageNames] = await Promise.all([elevsPromise, Promise.all(villagePromises)]);
+
   _elevProfileData = sampled.map((p, i) => ({ lat: p.latitude, lon: p.longitude, dist: dists[i], elev: elevs[i] }));
+  
+  if (_elevProfileData.length > 0) {
+    const startV = from ? from.split(',')[0] : '';
+    const endV = to ? to.split(',')[0] : '';
+    _elevProfileData[0].village = startV;
+    _elevProfileData[_elevProfileData.length - 1].village = endV;
+    
+    let lastV = startV;
+    interIndices.forEach((idx, k) => {
+        const v = villageNames[k];
+        if (v && v.length > 2 && v !== lastV && v !== endV) {
+            _elevProfileData[idx].village = v;
+            lastV = v;
+        }
+    });
+  }
+
   drawElevProfile(_elevProfileData);
   document.getElementById('elev-profile').classList.add('open');
 }
@@ -990,6 +1028,35 @@ function drawElevProfile(data) {
   const distKm = maxDist / 1000;
   [0, .25, .5, .75, 1].forEach(f => {
     ctx2.fillText(`${(distKm * f).toFixed(1)}km`, xOf(maxDist * f), H - 4);
+  });
+
+  // Draw village markers
+  ctx2.font = '500 10.5px Roboto,sans-serif';
+  ctx2.textBaseline = 'middle';
+  pts.forEach((d, i) => {
+    if (d.village) {
+      const x = xOf(d.dist), y = yOf(d.elev);
+      
+      ctx2.beginPath();
+      ctx2.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx2.fillStyle = '#fff'; ctx2.fill();
+      ctx2.lineWidth = 2; ctx2.strokeStyle = '#1a73e8'; ctx2.stroke();
+
+      const textW = ctx2.measureText(d.village).width;
+      let tx = x, align = 'center', yOff = y - 14;
+      if (yOff < pad.t + 10) yOff = y + 14; 
+      if (i === 0 || x < pad.l + textW/2 + 5) { align = 'left'; tx = x + 8; yOff = y; }
+      else if (i === pts.length - 1 || x > cW + pad.l - textW/2 - 5) { align = 'right'; tx = x - 8; yOff = y; }
+
+      ctx2.textAlign = align;
+      
+      ctx2.lineJoin = 'round';
+      ctx2.lineWidth = 3.5;
+      ctx2.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx2.strokeText(d.village, tx, yOff);
+      ctx2.fillStyle = '#174ea6';
+      ctx2.fillText(d.village, tx, yOff);
+    }
   });
 
   // Hover scrubber
@@ -1182,7 +1249,7 @@ const __renderRoute = renderRoute;
 window.renderRoute = function (route, from, to) {
   __renderRoute(route, from, to);
   closeElevProfile();
-  buildElevationProfile(route).then(() => {
+  buildElevationProfile(route, from, to).then(() => {
     generateElevSuggestions(_elevProfileData);
   }).catch(() => { });
 };
