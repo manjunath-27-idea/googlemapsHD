@@ -14,7 +14,11 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 #sidebar{
   position:absolute;left:0;top:0;bottom:0;width:var(--panel);
   background:var(--white);z-index:10;display:flex;flex-direction:column;
-  box-shadow:var(--shadow3);overflow:hidden
+  box-shadow:var(--shadow3);
+}
+#sidebar-resizer{
+  position:absolute;top:0;bottom:0;right:-4px;width:8px;
+  cursor:ew-resize;z-index:99;background:transparent;
 }
 
 /* ── SEARCH PANEL ── */
@@ -282,9 +286,13 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
   position:absolute;bottom:0;left:var(--panel);right:0;z-index:8;
   background:rgba(255,255,255,.97);backdrop-filter:blur(4px);
   border-top:1px solid var(--border);padding:0;
-  transition:height .3s ease;height:0;overflow:hidden
+  transition:height .3s ease;height:0;overflow:hidden;
 }
-#elev-profile.open{height:130px}
+#elev-profile.open{height:var(--elev-h, 130px)}
+#elev-resizer{
+  position:absolute;top:-4px;left:0;right:0;height:8px;
+  cursor:ns-resize;z-index:99;background:transparent;
+}
 #elev-profile-inner{padding:10px 16px 6px;height:100%}
 #elev-profile-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 .ep-title{font-size:11px;font-weight:500;color:var(--sub);display:flex;align-items:center;gap:5px}

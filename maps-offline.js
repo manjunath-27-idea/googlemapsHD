@@ -647,6 +647,43 @@ document.getElementById('dest-input').addEventListener('keydown', e => {
 });
 
 // ══════════════════════════════════════════
+//  RESIZERS
+// ══════════════════════════════════════════
+const sResz = document.getElementById('sidebar-resizer');
+sResz.onmousedown = e => {
+  e.preventDefault();
+  document.body.style.cursor = 'ew-resize';
+  document.onmousemove = me => {
+    let w = me.clientX;
+    w = Math.max(250, Math.min(w, document.body.clientWidth - 100));
+    document.documentElement.style.setProperty('--panel', w + 'px');
+    map.invalidateSize();
+  };
+  document.onmouseup = () => { document.body.style.cursor = ''; document.onmousemove = document.onmouseup = null; };
+};
+
+const eResz = document.getElementById('elev-resizer');
+let __elevH = 130;
+eResz.onmousedown = e => {
+  e.preventDefault();
+  document.body.style.cursor = 'ns-resize';
+  const ep = document.getElementById('elev-profile');
+  ep.style.transition = 'none';
+  document.onmousemove = me => {
+    let h = document.body.clientHeight - me.clientY;
+    h = Math.max(100, Math.min(h, document.body.clientHeight * 0.8));
+    __elevH = h;
+    document.documentElement.style.setProperty('--elev-h', h + 'px');
+    if (_elevProfileData.length) drawElevProfile(_elevProfileData);
+  };
+  document.onmouseup = () => { 
+    document.body.style.cursor = ''; 
+    ep.style.transition = ''; 
+    document.onmousemove = document.onmouseup = null; 
+  };
+};
+
+// ══════════════════════════════════════════
 //  HELPERS
 // ══════════════════════════════════════════
 function fmtDur(s) { const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h}h ${m}m` : `${m} min`; }
@@ -931,28 +968,7 @@ async function buildElevationProfile(route, from, to) {
     dists.push(cumDist);
   }
   
-  const elevsPromise = fetchElevBatch(sampled);
-  
-  const numInter = Math.min(5, Math.floor(sampled.length / 10));
-  const interIndices = [];
-  if (numInter > 0) {
-    const stepInter = Math.floor(sampled.length / (numInter + 1));
-    for(let i=1; i<=numInter; i++) interIndices.push(i * stepInter);
-  }
-
-  const villagePromises = interIndices.map(async (idx) => {
-      if (!navigator.onLine) return null;
-      const pt = sampled[idx];
-      try {
-          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pt.latitude}&lon=${pt.longitude}&zoom=14`, { headers: { 'Accept-Language': 'en' }, signal: AbortSignal.timeout(4000) });
-          const d = await r.json();
-          const addr = d.address || {};
-          return addr.village || addr.town || addr.hamlet || addr.suburb || addr.neighbourhood || addr.city || addr.municipality || d.name || (d.display_name ? d.display_name.split(',')[0] : null);
-      } catch { return null; }
-  });
-
-  const [elevs, villageNames] = await Promise.all([elevsPromise, Promise.all(villagePromises)]);
-
+  const elevs = await fetchElevBatch(sampled);
   _elevProfileData = sampled.map((p, i) => ({ lat: p.latitude, lon: p.longitude, dist: dists[i], elev: elevs[i] }));
   
   if (_elevProfileData.length > 0) {
@@ -961,14 +977,34 @@ async function buildElevationProfile(route, from, to) {
     _elevProfileData[0].village = startV;
     _elevProfileData[_elevProfileData.length - 1].village = endV;
     
-    let lastV = startV;
-    interIndices.forEach((idx, k) => {
-        const v = villageNames[k];
-        if (v && v.length > 2 && v !== lastV && v !== endV) {
-            _elevProfileData[idx].village = v;
-            lastV = v;
+    const numInter = Math.min(15, Math.floor(sampled.length / 5));
+    if (numInter > 0) {
+      const stepInter = Math.floor(sampled.length / (numInter + 1));
+      const interIndices = [];
+      for(let i=1; i<=numInter; i++) interIndices.push(i * stepInter);
+      
+      // Async sequential fetching so map doesn't block and API doesn't throttle
+      (async function pollVillages() {
+        let lastV = startV;
+        for (const idx of interIndices) {
+            await new Promise(r => setTimeout(r, 1100)); // Respect 1req/sec limits
+            if (!navigator.onLine || _elevProfileData.length === 0) break; // exit if offline or route cleared
+            const pt = sampled[idx];
+            try {
+                const req = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pt.latitude}&lon=${pt.longitude}&zoom=14`, { headers: { 'Accept-Language': 'en' }, signal: AbortSignal.timeout(4000) });
+                const d = await req.json();
+                const addr = d.address || {};
+                const v = addr.village || addr.town || addr.hamlet || addr.suburb || addr.neighbourhood || addr.city || addr.municipality || d.name || (d.display_name ? d.display_name.split(',')[0] : null);
+                
+                if (v && v.length > 2 && v !== lastV && v !== endV) {
+                    _elevProfileData[idx].village = v;
+                    lastV = v;
+                    drawElevProfile(_elevProfileData);
+                }
+            } catch(e) { }
         }
-    });
+      })();
+    }
   }
 
   drawElevProfile(_elevProfileData);
@@ -1094,7 +1130,7 @@ function drawElevProfile(data) {
 
 function closeElevProfile() {
   document.getElementById('elev-profile').classList.remove('open');
-  _elevProfileData = [];
+  _elevProfileData = []; // Setting to empty stops the async village background fetcher automatically
   document.getElementById('elev-suggestions').innerHTML = '';
 }
 
