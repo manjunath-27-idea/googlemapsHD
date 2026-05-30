@@ -484,6 +484,14 @@ function startNavigation() {
   document.getElementById('nav-hud').classList.add('show');
   document.getElementById('nav-bottom').classList.add('show');
   updHUD(0);
+  
+  // Activate 3D perspective plane tilt
+  const mapEl = document.getElementById('map');
+  if (mapEl) {
+    mapEl.classList.add('tilted-3d');
+    setTimeout(() => { map.invalidateSize(); }, 150); // Recalculate dimensions for the expanded tilted container
+  }
+  
   const [lon, lat] = S.stepCoords[0]; map.flyTo([lat, lon], 17, { duration: 1.5 });
   if (!S.gpsOk) toast('Enable GPS for live tracking', 5000);
 }
@@ -573,6 +581,13 @@ function stopNavigation() {
   
   document.getElementById('sidebar').classList.remove('hidden');
   document.getElementById('mini-rail').style.display = 'none';
+  
+  // Restore flat 2D bird's-eye map view
+  const mapEl = document.getElementById('map');
+  if (mapEl) {
+    mapEl.classList.remove('tilted-3d');
+    setTimeout(() => { map.invalidateSize(); }, 850); // Recalculate dimensions after the 0.8s transition finishes
+  }
 }
 
 // ══════════════════════════════════════════
