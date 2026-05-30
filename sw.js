@@ -1,8 +1,24 @@
-// Maps 3D – Service Worker
-const TC = 'maps3d-tiles-v4', RC = 'maps3d-routes-v4', GC = 'maps3d-geo-v4', EC = 'maps3d-elevation-v4';
-const ALL = [TC, RC, GC, EC];
+// Maps Elevation & Navigation – Service Worker
+const TC = 'maps-tiles-v4', RC = 'maps-routes-v4', GC = 'maps-geo-v4', EC = 'maps-elevation-v4', AS = 'maps-app-shell-v1';
+const ALL = [TC, RC, GC, EC, AS];
 
-self.addEventListener('install', e => { e.waitUntil(self.skipWaiting()); });
+const APP_SHELL = [
+  './',
+  './index.html',
+  './maps.js',
+  './maps.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
+  'https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500&display=swap'
+];
+
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(AS)
+      .then(c => c.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
+  );
+});
 
 self.addEventListener('activate', e => {
   e.waitUntil(
@@ -14,6 +30,30 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
+
+  // ── App Shell & CDNs Interceptor ─────────────────────────
+  if (
+    u.origin === self.location.origin ||
+    u.hostname === 'cdnjs.cloudflare.com' ||
+    u.hostname === 'fonts.googleapis.com' ||
+    u.hostname === 'fonts.gstatic.com'
+  ) {
+    e.respondWith(
+      caches.match(e.request).then(h => {
+        if (h) return h;
+        return fetch(e.request).then(r => {
+          if (r && r.ok) {
+            return caches.open(AS).then(c => {
+              c.put(e.request, r.clone());
+              return r;
+            });
+          }
+          return r;
+        }).catch(() => new Response('Offline resource unavailable'));
+      })
+    );
+    return;
+  }
 
   // ── Tile cache (OpenStreetMap) ──────────────────────────
   if (u.hostname.endsWith('tile.openstreetmap.org')) {
