@@ -1,5 +1,5 @@
-// Maps Offline – Service Worker
-const TC = 'maps-tiles-v3', RC = 'maps-routes-v3', GC = 'maps-geo-v3', EC = 'maps-elevation-v3';
+// Maps 3D – Service Worker
+const TC = 'maps3d-tiles-v4', RC = 'maps3d-routes-v4', GC = 'maps3d-geo-v4', EC = 'maps3d-elevation-v4';
 const ALL = [TC, RC, GC, EC];
 
 self.addEventListener('install', e => { e.waitUntil(self.skipWaiting()); });
@@ -69,9 +69,9 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // ── Elevation cache (Open-Elevation) ───────────────────
+  // ── Elevation cache (Open-Elevation & Open-Meteo) ───────────────────
   // Network-first: serve from cache while revalidating in background
-  if (u.hostname === 'api.open-elevation.com') {
+  if (u.hostname === 'api.open-elevation.com' || u.hostname === 'api.open-meteo.com') {
     e.respondWith(caches.open(EC).then(async c => {
       const h = await c.match(e.request);
       if (h) {
@@ -84,6 +84,9 @@ self.addEventListener('fetch', e => {
         if (r.ok) c.put(e.request, r.clone());
         return r;
       } catch {
+        if (u.hostname === 'api.open-meteo.com') {
+          return new Response(JSON.stringify({ elevation: [] }), { headers: { 'Content-Type': 'application/json' } });
+        }
         return new Response(JSON.stringify({ results: [] }), { headers: { 'Content-Type': 'application/json' } });
       }
     }));

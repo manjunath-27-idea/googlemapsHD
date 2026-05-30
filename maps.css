@@ -262,7 +262,8 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 .nav-stop:hover{background:#f5c6c2}
 
 /* ── MAP CONTROLS ── */
-#map-controls{position:absolute;right:14px;bottom:80px;z-index:9;display:flex;flex-direction:column;gap:6px}
+#map-controls{position:absolute;right:14px;bottom:80px;z-index:9;display:flex;flex-direction:column;gap:6px;transition:bottom .3s ease}
+#elev-profile.open ~ #map-controls { bottom: calc(var(--elev-h, 130px) + 16px); }
 .mc-btn{width:42px;height:42px;background:var(--white);border:none;border-radius:50%;cursor:pointer;
   box-shadow:var(--shadow2);display:flex;align-items:center;justify-content:center;
   color:var(--sub);font-size:18px;font-weight:400;transition:background .15s,color .15s}
@@ -295,15 +296,18 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 ::-webkit-scrollbar-thumb{background:#ccc;border-radius:3px}
 .leaflet-control-zoom{display:none}
 .leaflet-control-attribution{font-size:10px!important;background:rgba(255,255,255,.7)!important}
+.leaflet-control-scale{transition:margin-bottom .3s ease;margin-bottom:8px!important}
+.msl-tooltip{background:rgba(32,33,36,.88)!important;color:#fff!important;border:none!important;border-radius:6px!important;padding:3px 8px!important;font-size:11px!important;box-shadow:0 2px 6px rgba(0,0,0,.25)!important}
+.msl-tooltip::before{border-top-color:rgba(32,33,36,.88)!important}
 
 /* ── ELEVATION CHIP (bottom-right of map) ── */
 #elev-chip{
-  position:absolute;right:70px;bottom:28px;z-index:9;
+  position:absolute;right:70px;bottom:52px;z-index:9;
   background:rgba(255,255,255,.96);backdrop-filter:blur(6px);
   border-radius:20px;padding:5px 12px 5px 10px;
   box-shadow:var(--shadow2);display:flex;align-items:center;gap:7px;
   font-size:12px;color:var(--text);pointer-events:auto;cursor:default;
-  transition:opacity .25s,transform .25s;min-width:90px
+  transition:opacity .25s,transform .25s,bottom .3s ease;min-width:90px
 }
 #elev-chip.hidden{opacity:0;pointer-events:none;transform:translateY(4px)}
 #elev-chip .elev-icon{color:#188038;flex-shrink:0}
