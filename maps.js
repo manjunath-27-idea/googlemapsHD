@@ -33,22 +33,13 @@ updateNetStatus();
 const worldBounds = L.latLngBounds(L.latLng(-85.05112878, -180), L.latLng(85.05112878, 180));
 const map = L.map('map', {
   zoomControl: false,
+  minZoom: 2,
   maxBounds: worldBounds,
   maxBoundsViscosity: 1.0,
   worldCopyJump: false
-}).setView([20, 0], 3);
+}).setView([15, 0], 2);
 
 L.control.scale({ imperial: true, metric: true, position: 'bottomright' }).addTo(map);
-
-function updateMinZoom() {
-  const width = map.getSize().x;
-  const computedMin = Math.max(2, Math.ceil(Math.log2(width / 256)));
-  if (map.getMinZoom() !== computedMin) {
-    map.setMinZoom(computedMin);
-  }
-}
-map.on('resize', updateMinZoom);
-map.whenReady(updateMinZoom);
 
 map.on('zoomend', () => {
     if (S.elevMarkersGroup) {
@@ -1957,7 +1948,6 @@ function setGroundLevel(elev) {
 //  INIT
 // ══════════════════════════════════════════
 window.addEventListener('load', () => {
-  updateMinZoom();
   setTimeout(() => {
     if (!S.gpsOk) document.getElementById('gps-panel').classList.add('show');
   }, 1000);
