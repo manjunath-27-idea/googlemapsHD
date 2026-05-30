@@ -249,17 +249,22 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 .eab-desc{font-size:11px;color:var(--sub)}
 
 #nav-bottom{
-  display:none;position:absolute;bottom:0;left:calc(var(--panel) + 64px);right:0;z-index:20;
-  background:var(--white);padding:13px 20px;box-shadow:0 -2px 12px rgba(0,0,0,.15);
-  align-items:center;gap:16px; transition:left .3s ease;
+  display:none;position:absolute;top:80px;right:14px;width:170px;z-index:999;
+  background:rgba(255,255,255,0.96);backdrop-filter:blur(8px);
+  border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow3);
+  padding:8px 12px 12px;flex-direction:column;gap:8px;user-select:none;
 }
-#sidebar.hidden ~ #nav-bottom { left: 64px; }
 #nav-bottom.show{display:flex}
-.nav-eta{flex:1}
-.nav-eta-time{font-size:20px;font-weight:500;color:var(--text);font-family:'Google Sans',sans-serif}
-.nav-eta-label{font-size:12px;color:var(--sub)}
-.nav-stop{padding:10px 18px;background:#fce8e6;color:var(--red);border:none;border-radius:20px;
-  font-size:14px;font-family:'Roboto',sans-serif;cursor:pointer;font-weight:500}
+.drag-handle{
+  width:100%;height:16px;display:flex;align-items:center;justify-content:center;
+  cursor:move;margin-bottom:2px;border-bottom:1px dashed var(--border);
+}
+.drag-dots{font-size:10px;color:var(--sub);letter-spacing:2px}
+.nav-eta{text-align:center}
+.nav-eta-time{font-size:22px;font-weight:700;color:var(--text);font-family:'Google Sans',sans-serif}
+.nav-eta-label{font-size:10px;color:var(--sub);margin-top:1px}
+.nav-stop{width:100%;padding:8px;background:#fce8e6;color:var(--red);border:none;border-radius:18px;
+  font-size:12px;font-family:'Roboto',sans-serif;cursor:pointer;font-weight:500;transition:background 0.15s}
 .nav-stop:hover{background:#f5c6c2}
 
 /* ── MAP CONTROLS ── */
@@ -297,7 +302,8 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 ::-webkit-scrollbar-thumb{background:#ccc;border-radius:3px}
 .leaflet-control-zoom{display:none}
 .leaflet-control-attribution{font-size:10px!important;background:rgba(255,255,255,.7)!important}
-.leaflet-control-scale{transition:margin-bottom .3s ease;margin-bottom:8px}
+.leaflet-control-scale{margin-bottom:8px}
+.leaflet-bottom{bottom:var(--elev-h, 0px) !important;transition:bottom .3s ease}
 .msl-tooltip{background:rgba(32,33,36,.88)!important;color:#fff!important;border:none!important;border-radius:6px!important;padding:3px 8px!important;font-size:11px!important;box-shadow:0 2px 6px rgba(0,0,0,.25)!important}
 .msl-tooltip::before{border-top-color:rgba(32,33,36,.88)!important}
 

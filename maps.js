@@ -482,6 +482,69 @@ function clearRoute() {
 // ══════════════════════════════════════════
 //  NAVIGATION
 // ══════════════════════════════════════════
+function makeDraggable(el, handle) {
+  let posX = 0, posY = 0, mouseX = 0, mouseY = 0;
+  handle.onmousedown = dragMouseDown;
+  handle.ontouchstart = dragTouchStart;
+
+  function dragMouseDown(e) {
+    e.preventDefault();
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    document.onmouseup = closeDragElement;
+    document.onmousemove = elementDrag;
+  }
+
+  function dragTouchStart(e) {
+    if (e.touches.length === 1) {
+      mouseX = e.touches[0].clientX;
+      mouseY = e.touches[0].clientY;
+      document.ontouchend = closeDragElement;
+      document.ontouchmove = elementTouchDrag;
+    }
+  }
+
+  function elementDrag(e) {
+    e.preventDefault();
+    posX = mouseX - e.clientX;
+    posY = mouseY - e.clientY;
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    let top = el.offsetTop - posY;
+    let left = el.offsetLeft - posX;
+    top = Math.max(10, Math.min(top, window.innerHeight - el.offsetHeight - 10));
+    left = Math.max(10, Math.min(left, window.innerWidth - el.offsetWidth - 10));
+    el.style.top = top + "px";
+    el.style.left = left + "px";
+    el.style.bottom = "auto";
+    el.style.right = "auto";
+  }
+
+  function elementTouchDrag(e) {
+    if (e.touches.length === 1) {
+      posX = mouseX - e.touches[0].clientX;
+      posY = mouseY - e.touches[0].clientY;
+      mouseX = e.touches[0].clientX;
+      mouseY = e.touches[0].clientY;
+      let top = el.offsetTop - posY;
+      let left = el.offsetLeft - posX;
+      top = Math.max(10, Math.min(top, window.innerHeight - el.offsetHeight - 10));
+      left = Math.max(10, Math.min(left, window.innerWidth - el.offsetWidth - 10));
+      el.style.top = top + "px";
+      el.style.left = left + "px";
+      el.style.bottom = "auto";
+      el.style.right = "auto";
+    }
+  }
+
+  function closeDragElement() {
+    document.onmouseup = null;
+    document.onmousemove = null;
+    document.ontouchend = null;
+    document.ontouchmove = null;
+  }
+}
+
 function getHeading(lat1, lon1, lat2, lon2) {
   const dy = lat2 - lat1;
   const dx = (lon2 - lon1) * Math.cos(lat1 * Math.PI / 180);
@@ -507,11 +570,10 @@ function startNavigation() {
   document.getElementById('nav-bottom').classList.add('show');
   updHUD(0);
   
-  // Activate 3D perspective plane tilt
   const mapEl = document.getElementById('map');
   if (mapEl) {
     mapEl.classList.add('tilted-3d');
-    setTimeout(() => { map.invalidateSize(); }, 150); // Recalculate dimensions for the expanded tilted container
+    setTimeout(() => { map.invalidateSize(); }, 150);
   }
   
   let heading = 0;
@@ -522,7 +584,12 @@ function startNavigation() {
   }
   applyMapTiltRotate(heading);
   
-  const [lon, lat] = S.stepCoords[0]; map.flyTo([lat, lon], 17, { duration: 1.5 });
+  const [lon, lat] = S.stepCoords[0];
+  const offset = 0.0009 * Math.pow(2, 17 - 17);
+  const offsetLat = lat + Math.cos(heading * Math.PI / 180) * offset;
+  const offsetLon = lon + Math.sin(heading * Math.PI / 180) * offset;
+  map.flyTo([offsetLat, offsetLon], 17, { duration: 1.5 });
+  
   if (!S.gpsOk) toast('Enable GPS for live tracking', 5000);
 }
 function updHUD(i) {
@@ -566,7 +633,6 @@ function checkElevAlert(lat, lon) {
       bar.classList.remove('hidden');
     }
     
-    // Update live title distance
     const tEl = document.getElementById('eab-title');
     if (tEl) {
       if (distAway > 25) {
@@ -591,7 +657,21 @@ function doNavUpdate(lat, lon) {
     S.activeStep = near; updHUD(near);
     document.querySelectorAll('.step-item').forEach((el, j) => el.classList.toggle('active', j === near));
   }
-  map.setView([lat, lon], map.getZoom(), { animate: true });
+  
+  let heading = 0;
+  if (near < S.stepCoords.length - 1) {
+    const [nextLon, nextLat] = S.stepCoords[near + 1];
+    heading = getHeading(lat, lon, nextLat, nextLon);
+    applyMapTiltRotate(heading);
+  } else {
+    applyMapTiltRotate(0);
+  }
+
+  const offset = 0.0009 * Math.pow(2, 17 - map.getZoom());
+  const offsetLat = lat + Math.cos(heading * Math.PI / 180) * offset;
+  const offsetLon = lon + Math.sin(heading * Math.PI / 180) * offset;
+  map.setView([offsetLat, offsetLon], map.getZoom(), { animate: true });
+  
   checkElevAlert(lat, lon);
 }
 function stopNavigation() {
@@ -813,6 +893,7 @@ function syncElevOverlays() {
   const ep = document.getElementById('elev-profile');
   const isOpen = ep.classList.contains('open');
   const h = isOpen ? __elevH : 0;
+  document.documentElement.style.setProperty('--elev-h', h + 'px');
   document.getElementById('elev-chip').style.bottom = (52 + h) + 'px';
   const scaleCtrl = document.querySelector('.leaflet-control-scale');
   if (scaleCtrl) scaleCtrl.style.marginBottom = (8 + h) + 'px';
@@ -1962,6 +2043,12 @@ function setGroundLevel(elev) {
 //  INIT
 // ══════════════════════════════════════════
 window.addEventListener('load', () => {
+  const navBottom = document.getElementById('nav-bottom');
+  const dragHandle = navBottom ? navBottom.querySelector('.drag-handle') : null;
+  if (navBottom && dragHandle) {
+    makeDraggable(navBottom, dragHandle);
+  }
+
   setTimeout(() => {
     if (!S.gpsOk) document.getElementById('gps-panel').classList.add('show');
   }, 1000);
