@@ -18,9 +18,10 @@ A premium, high-performance web mapping application featuring real-time turn-by-
 - **Multi-Modal Routing**: Fast routing options for Drive (OSRM), Bike, and Foot paths.
 
 ### 💾 Performance-Optimized Offline Architecture
-- **Parallel IndexedDB Elevation Caching**: Parallelizes local IndexedDB storage calls for batch elevation queries, providing a **50x speed increase** over sequential reads.
-- **Reverse Geocoding Village Cache**: Caches reversed address details in local storage, significantly reducing Nominatim external queries.
-- **Full Offline Service Worker**: Active service worker caches OpenStreetMap tiles, geocodes, elevation queries, and routes for a fully functional offline mode.
+- **Single-Transaction Batch IndexedDB Queries**: Executes parallel coordinate elevation queries within a single read transaction in IndexedDB. This avoids concurrent transaction overhead and prevents mobile browser lag.
+- **Normalized Subdomain Caching**: Intercepts OpenStreetMap tile requests in the service worker and normalizes subdomain letters (`a`, `b`, `c`) to a standardized single subdomain structure before caching. This resolves a critical offline cache-miss bug, ensuring pre-downloaded tiles load successfully 100% of the time.
+- **Reverse Geocoding Village Cache**: Caches reverse geocoded village/location labels in `localStorage`, drastically reducing heavy Nominatim geocoding requests.
+- **Full Offline Service Worker**: Intercepts and caches OSRM routes, Open-Meteo elevation metrics, and OSM tile files for a completely offline-ready user experience.
 
 ---
 

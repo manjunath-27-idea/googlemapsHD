@@ -17,12 +17,13 @@ self.addEventListener('fetch', e => {
 
   // ── Tile cache (OpenStreetMap) ──────────────────────────
   if (u.hostname.endsWith('tile.openstreetmap.org')) {
+    const normUrl = e.request.url.replace(/^https:\/\/[a-z]\.tile\.openstreetmap\.org/, 'https://tile.openstreetmap.org');
     e.respondWith(caches.open(TC).then(async c => {
-      const h = await c.match(e.request);
+      const h = await c.match(normUrl);
       if (h) return h;
       try {
         const r = await fetch(e.request.clone(), { mode: 'cors' });
-        if (r.ok) c.put(e.request, r.clone());
+        if (r.ok) c.put(normUrl, r.clone());
         return r;
       } catch {
         return new Response(
@@ -103,11 +104,12 @@ self.addEventListener('message', async e => {
     let done = 0;
     for (const { x, y, z } of tiles) {
       const sd = ['a', 'b', 'c'][Math.abs(x + y) % 3];
-      const url = 'https://' + sd + '.tile.openstreetmap.org/' + z + '/' + x + '/' + y + '.png';
+      const fetchUrl = 'https://' + sd + '.tile.openstreetmap.org/' + z + '/' + x + '/' + y + '.png';
+      const normUrl = 'https://tile.openstreetmap.org/' + z + '/' + x + '/' + y + '.png';
       try {
-        if (!(await c.match(url))) {
-          const r = await fetch(url, { mode: 'cors' });
-          if (r.ok) await c.put(url, r);
+        if (!(await c.match(normUrl))) {
+          const r = await fetch(fetchUrl, { mode: 'cors' });
+          if (r.ok) await c.put(normUrl, r);
         }
         done++;
         if (done % 20 === 0) e.source.postMessage({ type: 'PROG', done, total: tiles.length });

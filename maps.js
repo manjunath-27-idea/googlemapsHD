@@ -917,14 +917,33 @@ async function fetchElevBatch(points) {
   const results = new Array(points.length).fill(null);
   const missing = [];
 
-  // Parallel IDB reads — ~50x faster than sequential await
-  const cacheReads = points.map((p, i) =>
-    elevDbGet(elevKey(p.latitude, p.longitude)).then(c => {
-      if (c !== null) results[i] = c;
-      else missing.push(i);
-    })
-  );
-  await Promise.all(cacheReads);
+  // Single transaction for batch reads — extremely performant and stable
+  try {
+    const db = await openElevDB();
+    const tx = db.transaction('elev', 'readonly');
+    const store = tx.objectStore('elev');
+    
+    const dbReads = points.map((p, i) => {
+      return new Promise(resolve => {
+        const req = store.get(elevKey(p.latitude, p.longitude));
+        req.onsuccess = () => {
+          if (req.result !== undefined && req.result !== null) {
+            results[i] = req.result;
+          } else {
+            missing.push(i);
+          }
+          resolve();
+        };
+        req.onerror = () => {
+          missing.push(i);
+          resolve();
+        };
+      });
+    });
+    await Promise.all(dbReads);
+  } catch {
+    points.forEach((p, i) => missing.push(i));
+  }
 
   if (!missing.length) return results;
   if (!navigator.onLine) return results;
