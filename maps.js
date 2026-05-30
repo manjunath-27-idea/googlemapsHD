@@ -30,8 +30,18 @@ updateNetStatus();
 // ══════════════════════════════════════════
 //  MAP
 // ══════════════════════════════════════════
-const map = L.map('map', { zoomControl: false, minZoom: 2, worldCopyJump: true }).setView([20, 0], 3);
+const map = L.map('map', { zoomControl: false, worldCopyJump: true }).setView([20, 0], 3);
 L.control.scale({ imperial: true, metric: true, position: 'bottomright' }).addTo(map);
+
+function updateMinZoom() {
+  const width = map.getSize().x;
+  const computedMin = Math.max(2, Math.ceil(Math.log2(width / 256)));
+  if (map.getMinZoom() !== computedMin) {
+    map.setMinZoom(computedMin);
+  }
+}
+map.on('resize', updateMinZoom);
+map.whenReady(updateMinZoom);
 
 map.on('zoomend', () => {
     if (S.elevMarkersGroup) {
@@ -1940,6 +1950,7 @@ function setGroundLevel(elev) {
 //  INIT
 // ══════════════════════════════════════════
 window.addEventListener('load', () => {
+  updateMinZoom();
   setTimeout(() => {
     if (!S.gpsOk) document.getElementById('gps-panel').classList.add('show');
   }, 1000);
