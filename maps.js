@@ -1790,16 +1790,16 @@ async function getAllElevData() {
   } catch { return []; }
 }
 
-// ── Grid step size (degrees) by zoom ─────────────────────
-//  Smaller step = finer cells at high zoom
+// ── Grid step size (degrees) dynamically calculated ──────
+//  Calculates step size based on map bounds to ensure a consistent grid size (~15x15)
 //  All steps are multiples of 0.001 (IDB key resolution)
-function getTopoStep(zoom) {
-  if (zoom < 8)  return 0.5;   // ~55 km − very coarse overview
-  if (zoom < 10) return 0.1;   // ~11 km
-  if (zoom < 12) return 0.02;  // ~2.2 km
-  if (zoom < 14) return 0.005; // ~550 m
-  if (zoom < 16) return 0.001; // ~111 m − street-level
-  return 0.001;
+function getTopoStep(m) {
+  const b = m.getBounds();
+  const latSpan = b.getNorth() - b.getSouth();
+  const lonSpan = b.getEast() - b.getWest();
+  const maxSpan = Math.max(latSpan, lonSpan);
+  let step = Math.round(maxSpan / 15 / 0.001) * 0.001;
+  return Math.max(0.001, parseFloat(step.toFixed(3)));
 }
 
 // ── Auto-fetch elevation for visible viewport ─────────────
@@ -1810,12 +1810,12 @@ let _fetchBusy = false;
 async function autoFetchVisibleElev(m) {
   if (_fetchBusy || !navigator.onLine) return;
   const zoom = m.getZoom();
-  if (zoom < 12) return; // Guard: prevent wide coordinates downloads at low zoom levels
+  if (zoom < 7) return; // Guard: prevent downloads at extreme low zooms
   
   _fetchBusy = true;
   try {
     const b = m.getBounds();
-    const step = getTopoStep(zoom);
+    const step = getTopoStep(m);
     const s = Math.floor(b.getSouth() / step) * step;
     const n = Math.ceil(b.getNorth() / step) * step;
     const w = Math.floor(b.getWest() / step) * step;
@@ -1956,7 +1956,7 @@ const ElevHeatLayer = L.Layer.extend({
     L.DomUtil.setPosition(this._cnv,m.containerPointToLayerPoint([0,0]));
 
     const zoom=m.getZoom();
-    const step=getTopoStep(zoom);
+    const step=getTopoStep(m);
     const all=await getAllElevData();
     if (all.length<4) return;
 
