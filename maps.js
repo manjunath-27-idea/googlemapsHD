@@ -30,7 +30,7 @@ updateNetStatus();
 // ══════════════════════════════════════════
 //  MAP
 // ══════════════════════════════════════════
-const map = L.map('map', { zoomControl: false }).setView([20, 0], 3);
+const map = L.map('map', { zoomControl: false, minZoom: 2, worldCopyJump: true }).setView([20, 0], 3);
 L.control.scale({ imperial: true, metric: true, position: 'bottomright' }).addTo(map);
 
 map.on('zoomend', () => {
