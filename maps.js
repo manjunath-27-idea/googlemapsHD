@@ -482,6 +482,20 @@ function clearRoute() {
 // ══════════════════════════════════════════
 //  NAVIGATION
 // ══════════════════════════════════════════
+function getHeading(lat1, lon1, lat2, lon2) {
+  const dy = lat2 - lat1;
+  const dx = (lon2 - lon1) * Math.cos(lat1 * Math.PI / 180);
+  let angle = Math.atan2(dx, dy) * 180 / Math.PI;
+  return (angle + 360) % 360;
+}
+
+function applyMapTiltRotate(heading) {
+  const mapEl = document.getElementById('map');
+  if (mapEl && S.navigating) {
+    mapEl.style.transform = `perspective(1000px) rotateX(55deg) rotateZ(${-heading.toFixed(1)}deg) scale(1.15)`;
+  }
+}
+
 function startNavigation() {
   if (!S.steps.length) { toast('No route loaded'); return; }
   S.navigating = true; S.activeStep = 0;
@@ -500,6 +514,14 @@ function startNavigation() {
     setTimeout(() => { map.invalidateSize(); }, 150); // Recalculate dimensions for the expanded tilted container
   }
   
+  let heading = 0;
+  if (S.stepCoords.length > 1) {
+    const [lon1, lat1] = S.stepCoords[0];
+    const [lon2, lat2] = S.stepCoords[1];
+    heading = getHeading(lat1, lon1, lat2, lon2);
+  }
+  applyMapTiltRotate(heading);
+  
   const [lon, lat] = S.stepCoords[0]; map.flyTo([lat, lon], 17, { duration: 1.5 });
   if (!S.gpsOk) toast('Enable GPS for live tracking', 5000);
 }
@@ -515,35 +537,27 @@ function updHUD(i) {
 let _lastAlertSegment = null;
 function checkElevAlert(lat, lon) {
   if (!S.elevSegments || !S.elevSegments.length || !_elevProfileData || !_elevProfileData.length) return;
-  
-  // Find closest profile point to get current distance along route
-  let nearIdx = 0, minD = Infinity;
+  let nearIdx = 0, minDist = Infinity;
   for (let i = 0; i < _elevProfileData.length; i++) {
     const p = _elevProfileData[i];
-    const d = Math.pow(lat - p.lat, 2) + Math.pow(lon - p.lon, 2);
-    if (d < minD) { minD = d; nearIdx = i; }
+    const d = haverDist(lat, lon, p.lat, p.lon);
+    if (d < minDist) { minDist = d; nearIdx = i; }
   }
   const currDist = _elevProfileData[nearIdx].dist;
-
-  // Look for steep segments approaching (within 300m) or currently in progress
+  
   const upcoming = S.elevSegments.find(s => 
     (s.startDist > currDist && (s.startDist - currDist) < 300 && (s.maxGrade > 6 || s.deltaElev > 30)) ||
     (currDist >= s.startDist && currDist <= s.endDist && (s.maxGrade > 6 || s.deltaElev > 30))
   );
-
   const bar = document.getElementById('elev-alert-bar');
   if (upcoming) {
     const distAway = Math.max(0, upcoming.startDist - currDist);
-    const isClimb = upcoming.type === 'climb';
-    
+    const isClimb = upcoming.deltaElev > 0;
     if (_lastAlertSegment !== upcoming) {
       _lastAlertSegment = upcoming;
-      const isSteep = upcoming.maxGrade > 10;
-      const cls = isSteep ? 'valley' : (isClimb ? 'climb' : 'descent'); 
-      const icon = isClimb ? '↗' : '↘';
-      
+      bar.className = 'show';
       bar.innerHTML = `
-        <div class="eab-icon ${cls}">${icon}</div>
+        <div class="eab-icon ${isClimb ? 'climb' : 'descent'}">${isClimb ? '▲' : '▼'}</div>
         <div class="eab-body">
           <div class="eab-title" id="eab-title">Upcoming Terrain</div>
           <div class="eab-desc">${upcoming.deltaElev.toFixed(0)}m ${isClimb?'gain':'drop'} · ${upcoming.maxGrade.toFixed(1)}% slope</div>
