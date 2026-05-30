@@ -35,7 +35,7 @@ const map = L.map('map', {
   zoomControl: false,
   minZoom: 2,
   maxBounds: worldBounds,
-  maxBoundsViscosity: 1.0,
+  maxBoundsViscosity: 0.5,
   worldCopyJump: false
 }).setView([15, 0], 2);
 

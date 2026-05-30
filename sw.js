@@ -1,5 +1,5 @@
 // Maps Elevation & Navigation – Service Worker
-const TC = 'maps-tiles-v4', RC = 'maps-routes-v4', GC = 'maps-geo-v4', EC = 'maps-elevation-v4', AS = 'maps-app-shell-v5';
+const TC = 'maps-tiles-v4', RC = 'maps-routes-v4', GC = 'maps-geo-v4', EC = 'maps-elevation-v4', AS = 'maps-app-shell-v6';
 const ALL = [TC, RC, GC, EC, AS];
 
 const APP_SHELL = [
@@ -57,6 +57,20 @@ self.addEventListener('fetch', e => {
 
   // ── Tile cache (OpenStreetMap) ──────────────────────────
   if (u.hostname.endsWith('tile.openstreetmap.org')) {
+    const match = u.pathname.match(/\/(\d+)\/(-?\d+)\/(-?\d+)\.png/);
+    if (match) {
+      const z = parseInt(match[1], 10);
+      const x = parseInt(match[2], 10);
+      const y = parseInt(match[3], 10);
+      const maxTile = Math.pow(2, z);
+      if (x < 0 || x >= maxTile || y < 0 || y >= maxTile) {
+        e.respondWith(new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="none"/></svg>',
+          { headers: { 'Content-Type': 'image/svg+xml' } }
+        ));
+        return;
+      }
+    }
     const normUrl = e.request.url.replace(/^https:\/\/[a-z]\.tile\.openstreetmap\.org/, 'https://tile.openstreetmap.org');
     e.respondWith(caches.open(TC).then(async c => {
       const h = await c.match(normUrl);
