@@ -486,6 +486,8 @@ function clearRoute() {
   S.routeLayers = []; S.navigating = false;
   document.getElementById('nav-hud').classList.remove('show');
   document.getElementById('nav-bottom').classList.remove('show');
+  const startBtn = document.getElementById('start-nav-btn');
+  if (startBtn) startBtn.style.display = '';
   closeAll();
   document.getElementById('dir-panel').classList.add('open');
   document.getElementById('dir-toggle-btn').classList.add('active');
@@ -574,6 +576,9 @@ function applyMapTiltRotate(heading) {
 function startNavigation() {
   if (!S.steps.length) { toast('No route loaded'); return; }
   S.navigating = true; S.activeStep = 0;
+  
+  const startBtn = document.getElementById('start-nav-btn');
+  if (startBtn) startBtn.style.display = 'none';
   
   document.getElementById('sidebar').classList.add('hidden');
   document.getElementById('mini-rail').style.display = 'flex';
@@ -692,6 +697,9 @@ function stopNavigation() {
   document.getElementById('nav-bottom').classList.remove('show');
   document.getElementById('elev-alert-bar').classList.add('hidden');
   _lastAlertSegment = null;
+  
+  const startBtn = document.getElementById('start-nav-btn');
+  if (startBtn) startBtn.style.display = '';
   
   document.getElementById('sidebar').classList.remove('hidden');
   document.getElementById('mini-rail').style.display = 'none';
