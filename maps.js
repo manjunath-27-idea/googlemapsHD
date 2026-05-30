@@ -474,6 +474,8 @@ function clearRoute() {
   S.routeLayers = []; S.navigating = false;
   document.getElementById('nav-hud').classList.remove('show');
   document.getElementById('nav-bottom').classList.remove('show');
+  const startBtn = document.getElementById('start-nav-btn');
+  if (startBtn) startBtn.style.display = '';
   closeAll();
   document.getElementById('dir-panel').classList.add('open');
   document.getElementById('dir-toggle-btn').classList.add('active');
@@ -482,9 +484,89 @@ function clearRoute() {
 // ══════════════════════════════════════════
 //  NAVIGATION
 // ══════════════════════════════════════════
+function makeDraggable(el, handle) {
+  let posX = 0, posY = 0, mouseX = 0, mouseY = 0;
+  handle.onmousedown = dragMouseDown;
+  handle.ontouchstart = dragTouchStart;
+
+  function dragMouseDown(e) {
+    e.preventDefault();
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    document.onmouseup = closeDragElement;
+    document.onmousemove = elementDrag;
+  }
+
+  function dragTouchStart(e) {
+    if (e.touches.length === 1) {
+      mouseX = e.touches[0].clientX;
+      mouseY = e.touches[0].clientY;
+      document.ontouchend = closeDragElement;
+      document.ontouchmove = elementTouchDrag;
+    }
+  }
+
+  function elementDrag(e) {
+    e.preventDefault();
+    posX = mouseX - e.clientX;
+    posY = mouseY - e.clientY;
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    let top = el.offsetTop - posY;
+    let left = el.offsetLeft - posX;
+    top = Math.max(10, Math.min(top, window.innerHeight - el.offsetHeight - 10));
+    left = Math.max(10, Math.min(left, window.innerWidth - el.offsetWidth - 10));
+    el.style.top = top + "px";
+    el.style.left = left + "px";
+    el.style.bottom = "auto";
+    el.style.right = "auto";
+  }
+
+  function elementTouchDrag(e) {
+    if (e.touches.length === 1) {
+      posX = mouseX - e.touches[0].clientX;
+      posY = mouseY - e.touches[0].clientY;
+      mouseX = e.touches[0].clientX;
+      mouseY = e.touches[0].clientY;
+      let top = el.offsetTop - posY;
+      let left = el.offsetLeft - posX;
+      top = Math.max(10, Math.min(top, window.innerHeight - el.offsetHeight - 10));
+      left = Math.max(10, Math.min(left, window.innerWidth - el.offsetWidth - 10));
+      el.style.top = top + "px";
+      el.style.left = left + "px";
+      el.style.bottom = "auto";
+      el.style.right = "auto";
+    }
+  }
+
+  function closeDragElement() {
+    document.onmouseup = null;
+    document.onmousemove = null;
+    document.ontouchend = null;
+    document.ontouchmove = null;
+  }
+}
+
+function getHeading(lat1, lon1, lat2, lon2) {
+  const dy = lat2 - lat1;
+  const dx = (lon2 - lon1) * Math.cos(lat1 * Math.PI / 180);
+  let angle = Math.atan2(dx, dy) * 180 / Math.PI;
+  return (angle + 360) % 360;
+}
+
+function applyMapTiltRotate(heading) {
+  const mapEl = document.getElementById('map');
+  if (mapEl && S.navigating) {
+    mapEl.style.transform = `perspective(1000px) rotateX(55deg) rotateZ(${-heading.toFixed(1)}deg) scale(1.15)`;
+  }
+}
+
 function startNavigation() {
   if (!S.steps.length) { toast('No route loaded'); return; }
   S.navigating = true; S.activeStep = 0;
+  
+  const startBtn = document.getElementById('start-nav-btn');
+  if (startBtn) startBtn.style.display = 'none';
   
   document.getElementById('sidebar').classList.add('hidden');
   document.getElementById('mini-rail').style.display = 'flex';
@@ -493,14 +575,26 @@ function startNavigation() {
   document.getElementById('nav-bottom').classList.add('show');
   updHUD(0);
   
-  // Activate 3D perspective plane tilt
   const mapEl = document.getElementById('map');
   if (mapEl) {
     mapEl.classList.add('tilted-3d');
-    setTimeout(() => { map.invalidateSize(); }, 150); // Recalculate dimensions for the expanded tilted container
+    setTimeout(() => { map.invalidateSize(); }, 150);
   }
   
-  const [lon, lat] = S.stepCoords[0]; map.flyTo([lat, lon], 17, { duration: 1.5 });
+  let heading = 0;
+  if (S.stepCoords.length > 1) {
+    const [lon1, lat1] = S.stepCoords[0];
+    const [lon2, lat2] = S.stepCoords[1];
+    heading = getHeading(lat1, lon1, lat2, lon2);
+  }
+  applyMapTiltRotate(heading);
+  
+  const [lon, lat] = S.stepCoords[0];
+  const offset = 0.0009 * Math.pow(2, 17 - 17);
+  const offsetLat = lat + Math.cos(heading * Math.PI / 180) * offset;
+  const offsetLon = lon + Math.sin(heading * Math.PI / 180) * offset;
+  map.flyTo([offsetLat, offsetLon], 17, { duration: 1.5 });
+  
   if (!S.gpsOk) toast('Enable GPS for live tracking', 5000);
 }
 function updHUD(i) {
@@ -515,35 +609,27 @@ function updHUD(i) {
 let _lastAlertSegment = null;
 function checkElevAlert(lat, lon) {
   if (!S.elevSegments || !S.elevSegments.length || !_elevProfileData || !_elevProfileData.length) return;
-  
-  // Find closest profile point to get current distance along route
-  let nearIdx = 0, minD = Infinity;
+  let nearIdx = 0, minDist = Infinity;
   for (let i = 0; i < _elevProfileData.length; i++) {
     const p = _elevProfileData[i];
-    const d = Math.pow(lat - p.lat, 2) + Math.pow(lon - p.lon, 2);
-    if (d < minD) { minD = d; nearIdx = i; }
+    const d = haverDist(lat, lon, p.lat, p.lon);
+    if (d < minDist) { minDist = d; nearIdx = i; }
   }
   const currDist = _elevProfileData[nearIdx].dist;
-
-  // Look for steep segments approaching (within 300m) or currently in progress
+  
   const upcoming = S.elevSegments.find(s => 
     (s.startDist > currDist && (s.startDist - currDist) < 300 && (s.maxGrade > 6 || s.deltaElev > 30)) ||
     (currDist >= s.startDist && currDist <= s.endDist && (s.maxGrade > 6 || s.deltaElev > 30))
   );
-
   const bar = document.getElementById('elev-alert-bar');
   if (upcoming) {
     const distAway = Math.max(0, upcoming.startDist - currDist);
-    const isClimb = upcoming.type === 'climb';
-    
+    const isClimb = upcoming.deltaElev > 0;
     if (_lastAlertSegment !== upcoming) {
       _lastAlertSegment = upcoming;
-      const isSteep = upcoming.maxGrade > 10;
-      const cls = isSteep ? 'valley' : (isClimb ? 'climb' : 'descent'); 
-      const icon = isClimb ? '↗' : '↘';
-      
+      bar.className = 'show';
       bar.innerHTML = `
-        <div class="eab-icon ${cls}">${icon}</div>
+        <div class="eab-icon ${isClimb ? 'climb' : 'descent'}">${isClimb ? '▲' : '▼'}</div>
         <div class="eab-body">
           <div class="eab-title" id="eab-title">Upcoming Terrain</div>
           <div class="eab-desc">${upcoming.deltaElev.toFixed(0)}m ${isClimb?'gain':'drop'} · ${upcoming.maxGrade.toFixed(1)}% slope</div>
@@ -552,7 +638,6 @@ function checkElevAlert(lat, lon) {
       bar.classList.remove('hidden');
     }
     
-    // Update live title distance
     const tEl = document.getElementById('eab-title');
     if (tEl) {
       if (distAway > 25) {
@@ -577,7 +662,21 @@ function doNavUpdate(lat, lon) {
     S.activeStep = near; updHUD(near);
     document.querySelectorAll('.step-item').forEach((el, j) => el.classList.toggle('active', j === near));
   }
-  map.setView([lat, lon], map.getZoom(), { animate: true });
+  
+  let heading = 0;
+  if (near < S.stepCoords.length - 1) {
+    const [nextLon, nextLat] = S.stepCoords[near + 1];
+    heading = getHeading(lat, lon, nextLat, nextLon);
+    applyMapTiltRotate(heading);
+  } else {
+    applyMapTiltRotate(0);
+  }
+
+  const offset = 0.0009 * Math.pow(2, 17 - map.getZoom());
+  const offsetLat = lat + Math.cos(heading * Math.PI / 180) * offset;
+  const offsetLon = lon + Math.sin(heading * Math.PI / 180) * offset;
+  map.setView([offsetLat, offsetLon], map.getZoom(), { animate: true });
+  
   checkElevAlert(lat, lon);
 }
 function stopNavigation() {
@@ -586,6 +685,9 @@ function stopNavigation() {
   document.getElementById('nav-bottom').classList.remove('show');
   document.getElementById('elev-alert-bar').classList.add('hidden');
   _lastAlertSegment = null;
+  
+  const startBtn = document.getElementById('start-nav-btn');
+  if (startBtn) startBtn.style.display = '';
   
   document.getElementById('sidebar').classList.remove('hidden');
   document.getElementById('mini-rail').style.display = 'none';
@@ -799,6 +901,7 @@ function syncElevOverlays() {
   const ep = document.getElementById('elev-profile');
   const isOpen = ep.classList.contains('open');
   const h = isOpen ? __elevH : 0;
+  document.documentElement.style.setProperty('--elev-h', h + 'px');
   document.getElementById('elev-chip').style.bottom = (52 + h) + 'px';
   const scaleCtrl = document.querySelector('.leaflet-control-scale');
   if (scaleCtrl) scaleCtrl.style.marginBottom = (8 + h) + 'px';
@@ -1948,6 +2051,12 @@ function setGroundLevel(elev) {
 //  INIT
 // ══════════════════════════════════════════
 window.addEventListener('load', () => {
+  const navBottom = document.getElementById('nav-bottom');
+  const dragHandle = navBottom ? navBottom.querySelector('.drag-handle') : null;
+  if (navBottom && dragHandle) {
+    makeDraggable(navBottom, dragHandle);
+  }
+
   setTimeout(() => {
     if (!S.gpsOk) document.getElementById('gps-panel').classList.add('show');
   }, 1000);
