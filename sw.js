@@ -1,5 +1,5 @@
 // Maps Elevation & Navigation – Service Worker
-const TC = 'maps-tiles-v4', RC = 'maps-routes-v4', GC = 'maps-geo-v4', EC = 'maps-elevation-v4', AS = 'maps-app-shell-v8';
+const TC = 'maps-tiles-v4', RC = 'maps-routes-v4', GC = 'maps-geo-v4', EC = 'maps-elevation-v4', AS = 'maps-app-shell-v9';
 const ALL = [TC, RC, GC, EC, AS];
 
 const APP_SHELL = [

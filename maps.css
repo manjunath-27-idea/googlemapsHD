@@ -408,4 +408,22 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 .es-badge.info{background:#e8f0fe;color:#1a73e8}
 .es-badge.ok{background:#e8f5e9;color:#2e7d32}
 
+/* ── MARKER TOOLTIP LABELS ── */
+.marker-tooltip {
+  background: var(--white) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  padding: 4px 8px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  box-shadow: var(--shadow1) !important;
+  font-family: 'Roboto', sans-serif !important;
+  white-space: nowrap !important;
+  pointer-events: none !important;
+}
+.marker-tooltip::before {
+  border-top-color: var(--white) !important;
+}
+
 

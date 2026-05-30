@@ -159,7 +159,7 @@ function updateMyLocMarker(lat, lon, acc) {
 function useMyLocation() {
   const go = (lat, lon) => {
     S.oC = [lat, lon];
-    rgc(lat, lon).then(n => { S.origin = n.split(',').slice(0, 2).join(','); document.getElementById('origin-input').value = S.origin; });
+    rgc(lat, lon).then(n => { S.origin = n.split(',').slice(0, 2).join(','); document.getElementById('origin-input').value = S.origin; updateMarkerTooltips(); });
     placeOrig([lat, lon]); map.flyTo([lat, lon], 14, { duration: 1 });
   };
   if (S.gpsCoords) { go(...S.gpsCoords); return; }
@@ -261,7 +261,9 @@ function placeOrig(coords) {
     const p = e.target.getLatLng(); S.oC = [p.lat, p.lng];
     S.origin = (await rgc(p.lat, p.lng)).split(',').slice(0, 2).join(',');
     document.getElementById('origin-input').value = S.origin;
+    updateMarkerTooltips();
   });
+  updateMarkerTooltips();
 }
 function placeDest(coords) {
   if (S.dMark) map.removeLayer(S.dMark);
@@ -270,7 +272,19 @@ function placeDest(coords) {
     const p = e.target.getLatLng(); S.dC = [p.lat, p.lng];
     S.dest = (await rgc(p.lat, p.lng)).split(',').slice(0, 2).join(',');
     document.getElementById('dest-input').value = S.dest;
+    updateMarkerTooltips();
   });
+  updateMarkerTooltips();
+}
+function updateMarkerTooltips() {
+  if (S.oMark) {
+    const name = S.origin ? S.origin.split(',')[0] : 'Origin';
+    S.oMark.bindTooltip(name, { permanent: true, direction: 'top', className: 'marker-tooltip' }).openTooltip();
+  }
+  if (S.dMark) {
+    const name = S.dest ? S.dest.split(',')[0] : 'Destination';
+    S.dMark.bindTooltip(name, { permanent: true, direction: 'top', className: 'marker-tooltip' }).openTooltip();
+  }
 }
 
 // ══════════════════════════════════════════
@@ -806,7 +820,7 @@ map.on('contextmenu', e => {
 function closeCtx() { document.getElementById('ctx-menu').style.display = 'none'; }
 function ctxFrom() {
   const { lat, lng } = S.ctxLL; S.oC = [lat, lng];
-  rgc(lat, lng).then(n => { S.origin = n.split(',').slice(0, 2).join(','); document.getElementById('origin-input').value = S.origin; });
+  rgc(lat, lng).then(n => { S.origin = n.split(',').slice(0, 2).join(','); document.getElementById('origin-input').value = S.origin; updateMarkerTooltips(); });
   placeOrig([lat, lng]); closeAll();
   document.getElementById('dir-panel').classList.add('open');
   document.getElementById('dir-toggle-btn').classList.add('active');
@@ -814,7 +828,7 @@ function ctxFrom() {
 }
 function ctxTo() {
   const { lat, lng } = S.ctxLL; S.dC = [lat, lng];
-  rgc(lat, lng).then(n => { S.dest = n.split(',').slice(0, 2).join(','); document.getElementById('dest-input').value = S.dest; });
+  rgc(lat, lng).then(n => { S.dest = n.split(',').slice(0, 2).join(','); document.getElementById('dest-input').value = S.dest; updateMarkerTooltips(); });
   placeDest([lat, lng]); closeAll();
   document.getElementById('dir-panel').classList.add('open');
   document.getElementById('dir-toggle-btn').classList.add('active');
