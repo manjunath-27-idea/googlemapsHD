@@ -30,7 +30,14 @@ updateNetStatus();
 // ══════════════════════════════════════════
 //  MAP
 // ══════════════════════════════════════════
-const map = L.map('map', { zoomControl: false, worldCopyJump: true }).setView([20, 0], 3);
+const worldBounds = L.latLngBounds(L.latLng(-85.05112878, -180), L.latLng(85.05112878, 180));
+const map = L.map('map', {
+  zoomControl: false,
+  maxBounds: worldBounds,
+  maxBoundsViscosity: 1.0,
+  worldCopyJump: false
+}).setView([20, 0], 3);
+
 L.control.scale({ imperial: true, metric: true, position: 'bottomright' }).addTo(map);
 
 function updateMinZoom() {
@@ -58,7 +65,7 @@ map.on('zoomend', () => {
 
 let _currentTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  maxZoom: 19, crossOrigin: true
+  maxZoom: 19, crossOrigin: true, noWrap: true
 }).addTo(map);
 
 // ══════════════════════════════════════════
@@ -1644,12 +1651,12 @@ const TILE_DEFS = {
   map: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attr: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19, opts: { crossOrigin: true }
+    maxZoom: 19, opts: { crossOrigin: true, noWrap: true }
   },
   terrain: {
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attr: 'Map data: © OpenStreetMap | Style: © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
-    maxZoom: 17, opts: {}
+    maxZoom: 17, opts: { noWrap: true }
   }
 };
 
