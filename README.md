@@ -65,28 +65,88 @@ To enable offline routing and navigation, the application implements a multi-tie
 
 ---
 
-## 🧠 Key Algorithmic Concepts
+## 🏔️ The Detailed Elevation System & Topographical Algorithms
 
-### 1. Single-Transaction Batch IndexedDB Queries (50x Speedup)
-When loading a route with hundreds of points, checking IndexedDB cache for each coordinate sequentially blocks execution. Spawning parallel transactions concurrently via separate connection queries saturates the browser's database queue.
+The core of the navigation suite is its offline-first elevation engine, which operates across multiple layers of caching, interpolation, and geometric processing.
 
-* **How it works**: The app opens **one single read transaction** (`db.transaction('elev', 'readonly')`) for the entire batch. It creates a list of asynchronous retrieval operations (`store.get(key)`) within that single transaction, and wraps them in a single `Promise.all()` wrapper. This minimizes IndexedDB connection overhead, providing a **50x query speedup** while keeping memory allocation flat.
+### 1. Spatial Grid Hashing & Key Quantization
+To cache geographical coordinates efficiently in a local database without consuming infinite memory, the engine quantizes coordinates into a uniform spatial hash grid:
+* **Quantization Key Generation**: Latitude and longitude are formatted to 3 decimal places to create a coordinate key:
+  $$\text{Key} = \text{lat.toFixed(3)} + \text{","} + \text{lon.toFixed(3)}$$
+* **Resolution Scale**: At the equator, 1 degree of latitude is approximately 111 kilometers. Consequently, a step size of $0.001^{\circ}$ resolves to a spatial grid cell of approximately **111 meters** in width and height.
+* **Memory & Storage Performance**: Quantizing coordinates ensures that adjacent path points map to the same grid cell, reducing redundant API hits and compressing the size of the database.
 
-### 2. Service Worker Subdomain Normalization
-OpenStreetMap distributes tile requests among three subdomains (`a.tile`, `b.tile`, and `c.tile.openstreetmap.org`) to bypass the browser's concurrent connection limit per domain.
-* **The Bug**: Since `caches.match` does exact URL comparisons, caching a tile under subdomain `a` causes a cache miss when Leaflet requests it under subdomain `b` while offline.
-* **The Solution**: The Service Worker `sw.js` intercepts all incoming OpenStreetMap requests and **normalizes the subdomain prefix to a standardized format** (`https://tile.openstreetmap.org/...`) before putting it in or reading it from the Cache. This guarantees offline tiles load successfully 100% of the time.
+---
 
-### 3. Synchronous Database Write Completion
-IndexedDB operations are inherently asynchronous. 
-* **The Concept**: When retrieving route elevation grids from Open-Meteo, writing values to IndexedDB takes a few milliseconds. To prevent **race conditions** (where the canvas tries to draw contour lines before the database writes have committed), `fetchElevBatch` collects all `elevDbPut` write promises into a list and resolves only after `await Promise.all(puts)` finishes. This guarantees that data is written to local storage before Leaflet canvas rendering layers are drawn.
+### 2. High-Performance Asynchronous Query Pipeline
+Spawning sequential queries for each coordinate point on a route introduces massive latency and blocks the main execution loop. The engine resolves this through an asynchronous batching pipeline:
 
-### 4. Bounded Viewport Grid Calculations (Contour Maps)
-When the topographic view (flag button) is toggled, the app calculates a 2D bounding grid for the visible viewport and fetches the missing coordinates. 
-* **The Problem**: If the user is zoomed out or on a large monitor, the double coordinate grid loop (`latitude` $\times$ `longitude`) can generate millions of grid points, locking the browser thread.
-* **The Solution**: 
-  1. **Zoom Guard**: The overlay immediately returns if the zoom level is less than 12.
-  2. **Grid Size Cap**: It calculates grid dimensions (`rows * cols`). If it exceeds `350` points, it halts grid generation to protect the UI thread.
+```
+               [Coordinate Stream (Route Points)]
+                               │
+                               ▼
+               [Single-Transaction IDB Open]
+                               │
+               ┌───────────────┴───────────────┐
+               ▼                               ▼
+       [IndexedDB Cache Hit]           [IndexedDB Cache Miss]
+               │                               │
+               ▼                               ▼
+       [Return Value]                  [Group into Chunks of 100]
+                                               │
+                                               ▼
+                                     [Fetch from Open-Meteo]
+                                               │
+                                               ▼
+                                     [Promise.all DB Writes]
+                                               │
+                                               ▼
+                                      [Canvas Rendering]
+```
+
+* **Single-Transaction Batch Queries**: When loading coordinates for a route, the app opens **one single read-only transaction** (`db.transaction('elev', 'readonly')`). It executes all queries concurrently within this single transaction, wrapping each lookup request in a `Promise` and awaiting them via `Promise.all()`. This provides a **50x query speedup** compared to multi-transaction approaches.
+* **Network Batch Requests**: Coordinates that miss the database cache are gathered, chunked in batches of 100 points, and dispatched in a single request to the Open-Meteo elevation API. If Open-Meteo fails, the request falls back to the Open-Elevation POST service.
+* **Synchronous Write Guarantee**: To prevent race conditions where the canvas renders before database updates finish, `fetchElevBatch` compiles all database write operations into a list and resolves only after `await Promise.all(writes)` completes.
+
+---
+
+### 3. Bilinear-Interpolated Viewport Heatmap
+When the topographic view (flag button) is active, the custom Canvas Layer interpolates elevation data across the visible map viewport using bilinear interpolation to generate a smooth elevation gradient fill:
+
+* **Bilinear Interpolation Formula**: Let a grid cell be bounded by four known corners: Top-Left ($TL$), Top-Right ($TR$), Bottom-Left ($BL$), and Bottom-Right ($BR$). The normalized coordinates $x$ and $y$ lie within $[0, 1]$. The interpolated elevation $E(x, y)$ is defined by:
+  $$E(x, y) = TL(1-x)(1-y) + TR \cdot x(1-y) + BL(1-x)y + BR \cdot x y$$
+* **Viewport Subdivision**: At high zoom levels (zoom $\ge 14$), each grid cell is subdivided into $5 \times 5$ sub-cells. At lower zoom levels (zoom $\ge 10$), subdivision scales to $2 \times 2$ to balance quality and performance.
+* **Viewport Thread Protection**: A zoom guard locks elevation grid generation for zoom levels below 12. Additionally, grid dimension bounds ($rows \times cols$) are capped at 350 points, bypassing updates if the visible viewport is too wide.
+
+---
+
+### 4. Marching Squares Topographical Contours
+To overlay vector contour lines (iso-elevation curves) on top of the map, the application executes the **Marching Squares algorithm** on the computed 2D grid:
+
+1. **Iso-value Comparison**: The contour engine evaluates every $2 \times 2$ cell block in the grid against a range of contour elevation intervals (e.g. intervals of 2, 10, 25, 100, or 250 meters based on viewport topography).
+2. **Binary Index Masking**: Each corner of the cell is compared to the target iso-level. If the corner's elevation is $\ge$ the iso-level, its assigned bit is flagged. This produces a 4-bit state index (from 0 to 15):
+   $$\text{index} = (TL \ge L) \cdot 8 + (TR \ge L) \cdot 4 + (BR \ge L) \cdot 2 + (BL \ge L) \cdot 1$$
+
+   ```
+     TL (Bit 3) ───[0/1]─── TR (Bit 2)
+        │                     │
+      [3]                   [1]
+        │                     │
+     BL (Bit 0) ───[2]─── BR (Bit 1)
+   ```
+
+3. **Segment Lookup Table**: The 4-bit index queries a static lookup table (`_MS`) that identifies which edges (0: top, 1: right, 2: bottom, 3: left) must be connected to draw the contour line inside that cell.
+4. **Sub-Pixel Linear Interpolation**: To avoid staircase offsets, segment intersection points along the cell edges are linearly interpolated:
+   $$t = \frac{\text{level} - A}{B - A}$$
+   where $A$ and $B$ are the elevation values of the adjacent corner nodes.
+5. **Legibility Hierarchy**: Every 5th contour line is classified as a major index contour, drawn with a thicker stroke (1.4px, `rgba(0,50,0,0.65)`) compared to intermediate minor lines (0.7px, `rgba(0,60,0,0.38)`).
+
+---
+
+### 5. Interactive Charting & Village Annotation Stalks
+* **Dynamic Hover Tooltips**: High-precision hover indicators (`L.circleMarker`) are spaced along the active navigation route. Interacting with the path triggers floating `msl-tooltip` bubbles displaying the Mean Sea Level (`▲ m MSL`). Tooltips are cleaned from the map 30 seconds after interaction.
+* **Geographical Village Stalks**: A background parser reverse-geocodes intermediate route points using the Nominatim API. Queries are cached in LocalStorage (`nom_lat_lon`) and throttled with a 1.1-second timer to respect OpenStreetMap connection rules. The chart renders these village names as vertical stakes above the coordinate nodes, using horizontal collision-avoidance logic to prevent overlapping labels.
+* **GPS Altitude Tracking**: If GPS connectivity provides high-accuracy altitude data, the system bypasses API lookups, overrides calculated metrics in real-time, updates the active tracker point on the profile chart, and saves the verified elevation coordinates directly back into the local database cache.
 
 ---
 
