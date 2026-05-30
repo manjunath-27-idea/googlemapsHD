@@ -150,6 +150,22 @@ To overlay vector contour lines (iso-elevation curves) on top of the map, the ap
 
 ---
 
+### 6. Relative Terrain Reference & The Dynamic Datum Shift Concept (Custom MSL Offset)
+Traditionally, topographic maps present elevation as an absolute height above a static global datum—**Mean Sea Level (MSL)**. While globally consistent, this absolute scale is poorly optimized for localized spatial reasoning. For instance, in a city situated on a high plateau (such as Hyderabad at ~540 meters above MSL), a standard global color scale would render the entire region in high-altitude orange/red tones, erasing local micro-topography.
+
+To solve this limitation, this mapping suite introduces a **Dynamic Datum Shift (Relative MSL Mapping)** concept:
+
+* **Custom Ground Reference Level ($G$)**: The user can establish any arbitrary altitude as the local ground reference level ($G$), such as a city's baseline elevation, a specific trail head, or a geological datum.
+* **Relative Elevation Gradient Shift**: Instead of mapping the absolute elevation ($E$) to color ramps, the canvas interpolation engine evaluates the relative delta ($\Delta E$) for each grid coordinate:
+  $$\Delta E = E - G$$
+* **Localized Color Scale Transformation**:
+  * **Neutral Ground Level ($\Delta E = 0$ m)**: Rendered in a neutral **green** tone, representing local sea-level equivalence.
+  * **Local Depression Zones ($\Delta E < 0$ m)**: Rendered in **deep-blue to cyan** gradients. This dynamically highlights localized valleys, dry lake beds, river trenches, and basins relative to the surrounding base elevation.
+  * **Local Uplift Zones ($\Delta E > 0$ m)**: Rendered in **yellow, orange, and red** gradients. This immediately emphasizes hills, ridges, peaks, and climbs relative to the local ground level.
+* **Practical Applications**: For hikers, cyclists, and geologists, this relative mapping paradigm transforms the display. Setting the reference level to their starting point immediately colors their path into absolute uphill climbs versus downhill segments, providing highly contextual topographic feedback optimized for local activities.
+
+---
+
 ## 🎨 UI/UX & Layout Management
 
 ```
