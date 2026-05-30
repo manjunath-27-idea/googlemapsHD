@@ -319,27 +319,35 @@ function openDirections() {
 
 function closeAll() {
   ['dir-panel', 'offline-panel', 'route-panel'].forEach(id => {
-    document.getElementById(id).classList.remove('open');
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('open');
   });
   document.querySelectorAll('.q-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('dir-toggle-btn').classList.remove('dir-active');
+  const dtBtn = document.getElementById('dir-toggle-btn');
+  if (dtBtn) dtBtn.classList.remove('dir-active');
 }
 
 function toggleDirections() {
-  const open = document.getElementById('dir-panel').classList.contains('open');
+  const panel = document.getElementById('dir-panel');
+  if (!panel) return;
+  const open = panel.classList.contains('open');
   closeAll();
   if (!open) {
-    document.getElementById('dir-panel').classList.add('open');
-    document.getElementById('dir-toggle-btn').classList.add('dir-active');
+    panel.classList.add('open');
+    const dtBtn = document.getElementById('dir-toggle-btn');
+    if (dtBtn) dtBtn.classList.add('dir-active');
     document.getElementById('origin-input').focus();
   }
 }
 function toggleOfflinePanel() {
-  const open = document.getElementById('offline-panel').classList.contains('open');
+  const panel = document.getElementById('offline-panel');
+  if (!panel) return;
+  const open = panel.classList.contains('open');
   closeAll();
   if (!open) {
-    document.getElementById('offline-panel').classList.add('open');
-    document.getElementById('offline-btn').classList.add('active');
+    panel.classList.add('open');
+    const offBtn = document.getElementById('offline-btn');
+    if (offBtn) offBtn.classList.add('active');
     renderAreas(); getSWStats();
   }
 }
@@ -961,10 +969,12 @@ async function fetchElevBatch(points) {
       );
       const d = await r.json();
       if (d.elevation && Array.isArray(d.elevation)) {
+        const puts = [];
         d.elevation.forEach((elev, j) => {
           const idx = chunk[j]; results[idx] = elev;
-          elevDbPut(elevKey(points[idx].latitude, points[idx].longitude), elev);
+          puts.push(elevDbPut(elevKey(points[idx].latitude, points[idx].longitude), elev));
         });
+        await Promise.all(puts);
       }
     } catch {
       // Fallback: Open-Elevation POST API
@@ -977,10 +987,12 @@ async function fetchElevBatch(points) {
         });
         const d = await r.json();
         if (d.results) {
+          const puts = [];
           d.results.forEach((res, j) => {
             const idx = chunk[j]; results[idx] = res.elevation;
-            elevDbPut(elevKey(points[idx].latitude, points[idx].longitude), res.elevation);
+            puts.push(elevDbPut(elevKey(points[idx].latitude, points[idx].longitude), res.elevation));
           });
+          await Promise.all(puts);
         }
       } catch { }
     }
@@ -1681,14 +1693,23 @@ function getTopoStep(zoom) {
 let _fetchBusy = false;
 async function autoFetchVisibleElev(m) {
   if (_fetchBusy || !navigator.onLine) return;
+  const zoom = m.getZoom();
+  if (zoom < 12) return; // Guard: prevent wide coordinates downloads at low zoom levels
+  
   _fetchBusy = true;
   try {
     const b = m.getBounds();
-    const step = getTopoStep(m.getZoom());
+    const step = getTopoStep(zoom);
     const s = Math.floor(b.getSouth() / step) * step;
     const n = Math.ceil(b.getNorth() / step) * step;
     const w = Math.floor(b.getWest() / step) * step;
     const e = Math.ceil(b.getEast() / step) * step;
+    
+    // Safety check: if grid dimensions are too large, skip to prevent locking UI thread
+    const rows = Math.round((n - s) / step) + 1;
+    const cols = Math.round((e - w) / step) + 1;
+    if (rows * cols > 350) return;
+    
     const pts = [];
     for (let lat = s; lat <= n + 1e-9; lat += step) {
       for (let lon = w; lon <= e + 1e-9; lon += step) {
