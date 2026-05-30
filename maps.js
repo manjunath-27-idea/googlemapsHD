@@ -34,8 +34,6 @@ const worldBounds = L.latLngBounds(L.latLng(-85.05112878, -180), L.latLng(85.051
 const map = L.map('map', {
   zoomControl: false,
   minZoom: 2,
-  maxBounds: worldBounds,
-  maxBoundsViscosity: 0.5,
   worldCopyJump: false
 }).setView([15, 0], 2);
 
@@ -56,7 +54,7 @@ map.on('zoomend', () => {
 
 let _currentTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  maxZoom: 19, crossOrigin: true, noWrap: true
+  maxZoom: 19, crossOrigin: true, noWrap: true, bounds: worldBounds
 }).addTo(map);
 
 // ══════════════════════════════════════════
@@ -1737,12 +1735,12 @@ const TILE_DEFS = {
   map: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attr: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19, opts: { crossOrigin: true, noWrap: true }
+    maxZoom: 19, opts: { crossOrigin: true, noWrap: true, bounds: worldBounds }
   },
   terrain: {
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attr: 'Map data: © OpenStreetMap | Style: © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
-    maxZoom: 17, opts: { noWrap: true }
+    maxZoom: 17, opts: { noWrap: true, bounds: worldBounds }
   }
 };
 
