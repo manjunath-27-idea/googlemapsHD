@@ -269,7 +269,7 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
 
 /* ── MAP CONTROLS ── */
 #map-controls{position:absolute;right:14px;bottom:80px;z-index:9;display:flex;flex-direction:column;gap:6px;transition:bottom .3s ease}
-#elev-profile.open ~ #map-controls { bottom: calc(var(--elev-h, 130px) + 76px); }
+#elev-profile.open ~ #map-controls { bottom: calc(var(--elev-h, 200px) + 76px); }
 .mc-btn{width:42px;height:42px;background:var(--white);border:none;border-radius:50%;cursor:pointer;
   box-shadow:var(--shadow2);display:flex;align-items:center;justify-content:center;
   color:var(--sub);font-size:18px;font-weight:400;transition:background .15s,color .15s}
@@ -339,7 +339,7 @@ body{font-family:'Roboto',sans-serif;background:#e8e0d8;overflow:hidden;height:1
   transition:height .3s ease, left .3s ease;height:0;overflow:hidden;
 }
 #sidebar.hidden ~ #elev-profile { left: 64px; }
-#elev-profile.open{height:var(--elev-h, 130px)}
+#elev-profile.open{height:var(--elev-h, 200px)}
 #elev-resizer{
   position:absolute;top:-4px;left:0;right:0;height:8px;
   cursor:ns-resize;z-index:99;background:transparent;

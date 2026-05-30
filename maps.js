@@ -87,7 +87,7 @@ function mkMyLoc() {
     iconSize: [22, 22], iconAnchor: [11, 11]
   });
 }
-const iA = mkPin('#1a73e8', 'A'), iB = mkPin('#d93025', 'B'), iPin = mkPin('#5f6368', '');
+const iA = mkPin('#1a73e8', ''), iB = mkPin('#d93025', ''), iPin = mkPin('#5f6368', '');
 
 // ══════════════════════════════════════════
 //  TOAST
@@ -575,6 +575,7 @@ function applyMapTiltRotate(heading) {
 
 function startNavigation() {
   if (!S.steps.length) { toast('No route loaded'); return; }
+  if (S.navigating) return; // Already navigating, don't start again
   S.navigating = true; S.activeStep = 0;
   
   const startBtn = document.getElementById('start-nav-btn');
@@ -704,11 +705,14 @@ function stopNavigation() {
   document.getElementById('sidebar').classList.remove('hidden');
   document.getElementById('mini-rail').style.display = 'none';
   
-  // Restore flat 2D bird's-eye map view
+  // Restore flat 2D bird's-eye map view — clear both CSS class AND inline transform
   const mapEl = document.getElementById('map');
   if (mapEl) {
     mapEl.classList.remove('tilted-3d');
-    setTimeout(() => { map.invalidateSize(); }, 850); // Recalculate dimensions after the 0.8s transition finishes
+    mapEl.style.transform = '';
+    mapEl.style.height = '';
+    mapEl.style.top = '';
+    setTimeout(() => { map.invalidateSize(); }, 850);
   }
 }
 
@@ -907,7 +911,7 @@ sResz.onmousedown = e => {
 };
 
 const eResz = document.getElementById('elev-resizer');
-let __elevH = 130;
+let __elevH = 200;
 
 function syncElevOverlays() {
   const ep = document.getElementById('elev-profile');
